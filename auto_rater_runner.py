@@ -245,7 +245,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         "results": run_results
     }
     
-    output_path.parent.mkdir(exist_ok=True)
+    output_file.parent.mkdir(exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as out_f:
         json.dump(output_payload, out_f, indent=2, ensure_ascii=False)
         
@@ -315,11 +315,6 @@ def main() -> None:
                     logger.error("⚠️ WARNING: Model configuration strings changed for profile '%s' (Triage: %s -> %s, Summary: %s -> %s). Execution aborted to protect data integrity. Use -f/--force to override and overwrite.", cfg_name, existing_data.get("triage_model"), triage_model, existing_data.get("summary_model"), summary_model)
                     sys.exit(1)
                 logger.info("Force override active: Overwriting modified model pairs for configuration '%s'...", cfg_name)
-                
-            # 3. Timestamp Caching Check Pass
-            if emails_timestamp <= existing_data.get("offline_emails_timestamp", 0) and not args.force:
-                logger.info("Result file already exists and dataset is up to date for configuration '%s'. Skipping run to save token cost. Use -f or --force to overwrite.", cfg_name)
-                continue
         
         try:
             run_config(cfg, emails, workspace_dir, judge_model, emails_timestamp, force_rerun=args.force)

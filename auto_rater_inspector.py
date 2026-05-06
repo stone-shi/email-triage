@@ -50,7 +50,7 @@ def print_level_2(results: List[Dict[str, Any]]) -> None:
             print(f"    (No summary generated)")
         print(border)
 
-def inspect_file(file_path: Path) -> None:
+def inspect_file(file_path: Path, level_filter: str = None) -> None:
     if not file_path.exists():
         print(f"Error: File not found at {file_path}")
         return
@@ -71,13 +71,17 @@ def inspect_file(file_path: Path) -> None:
     l1_list = [r for r in results if r.get("triage_level") == "Level 1" or r.get("triage_level") == "Level 1 (Escalated)"]
     l2_list = [r for r in results if r.get("triage_level") == "Level 2"]
     
-    print_level_0(l0_list)
-    print_level_1(l1_list)
-    print_level_2(l2_list)
+    if level_filter is None or level_filter == "0":
+        print_level_0(l0_list)
+    if level_filter is None or level_filter == "1":
+        print_level_1(l1_list)
+    if level_filter is None or level_filter == "2":
+        print_level_2(l2_list)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Auto Rater Human Inspection Interface Utility")
     parser.add_argument("--file", type=str, help="Specific target auto_rater_results_*.json file name inside data directory to inspect")
+    parser.add_argument("--level", type=str, choices=["0", "1", "2"], help="Filter display to show only a single triage level tier group (0, 1, or 2)")
     args = parser.parse_args()
     
     workspace_dir = Path(__file__).parent.resolve()
@@ -85,7 +89,7 @@ def main() -> None:
     
     if args.file:
         target_path = data_dir / args.file
-        inspect_file(target_path)
+        inspect_file(target_path, level_filter=args.level)
     else:
         # List available results JSON files for easy user selection menu
         result_files = list(data_dir.glob("auto_rater_results_*.json"))

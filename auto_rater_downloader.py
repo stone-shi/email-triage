@@ -1,5 +1,6 @@
 import json
 import logging
+import argparse
 import yaml
 import sys
 from pathlib import Path
@@ -25,11 +26,36 @@ def main() -> None:
         logger.error("Configuration file not found at %s", config_path)
         sys.exit(1)
         
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Auto Rater Offline Dataset Downloader Utility")
+    parser.add_argument("--sender", type=str, help="Filter by sender email address")
+    parser.add_argument("--receiver", type=str, help="Filter by receiver email address")
+    parser.add_argument("--subject", type=str, help="Filter by target subject line (automatically normalizes Re: Re: prefixes)")
+    args = parser.parse_args()
+    
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
         
     count = config.get("download_count", 20)
-    logger.info("Starting offline download of top %d emails from Gmail...", count)
+    
+    # Build Gmail API search query string dynamically
+    import re
+    query_parts = []
+    if args.sender:
+        query_parts.append(f"from:{args.sender}")
+    if args.receiver:
+        query_parts.append(f"to:{args.receiver}")
+    if args.subject:
+        # Repeatedly strip out leading case-insensitive 're:' or 'fwd:' prefixes and spaces
+        base_subject = re.sub(r'^(?i:\s*(?:re|fwd)\s*:\s*)+', '', args.subject).strip()
+        query_parts.append(f'subject:\"{base_subject}\"')
+        
+    query_str = " ".join(query_parts) if query_parts else None
+    
+    if query_str:
+        logger.info("Targeted thread search active with query: '%s'", query_str)
+    else:
+        logger.info("Starting generic offline download of top %d emails from Gmail...", count)
     
     # Initialize Gmail client (handles authentication internally)
     try:
@@ -45,9 +71,9 @@ def main() -> None:
     offline_dataset: List[Dict[str, Any]] = []
     
     try:
-        # List the latest messages (both read and unread) up to the specified count
+        # List the latest messages matching the query up to the specified count
         logger.info("Listing messages from user profile...")
-        response = gmail.service.users().messages().list(userId="me", maxResults=count).execute()
+        response = gmail.service.users().messages().list(userId="me", maxResults=count, q=query_str).execute()
         messages = response.get("messages", [])
         
         if not messages:

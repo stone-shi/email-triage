@@ -86,6 +86,28 @@ class EmailTriageEngine:
         Level 1 Triage: LiteLLM / DeepSeek flash binary classification with JSON validation.
         """
         prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
+        
+        # TEI Classifier Ingestion Pathway Switch
+        if getattr(settings.triage, "triage_type", "llm") == "tei":
+            tei_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
+            try:
+                logger.info("Level 1 Triage request sent to TEI Sequence Classifier server: %s", settings.triage.tei_url)
+                response = self.http_client.post(settings.triage.tei_url, json={"inputs": tei_text})
+                response.raise_for_status()
+                predictions = response.json()
+                
+                winning_pred = max(predictions, key=lambda x: x.get("score", 0.0))
+                winning_label = winning_pred.get("label", "").lower()
+                winning_score = winning_pred.get("score", 1.0)
+                
+                is_important = ("entailment" in winning_label and "not_" not in winning_label) or "important" in winning_label
+                reason = f"TEI Classifier resolved winning label: '{winning_label}'"
+                
+                logger.info("Level 1 TEI Classifier result for '%s': Important=%s (Score: %s)", subject, is_important, winning_score)
+                return is_important, reason, winning_score
+            except Exception as tei_err:
+                logger.error("Level 1 TEI Classifier server prediction failed: %s. Falling back to safety True.", tei_err)
+                return True, f"TEI server prediction error: {tei_err}", 1.0
         system_instruction = (
             "You are an expert executive assistant. Filter out automated updates, social notifications, "
             "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "

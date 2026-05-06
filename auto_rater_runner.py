@@ -147,53 +147,77 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             
         has_error = False
             
-        # 2. Level 1 LLM Classification
-        l1_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
-        l1_system = (
-            "You are an expert executive assistant. Filter out automated updates, social notifications, "
-            "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
-            "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly three fields: "
-            "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
-        )
-        
+        # 2. Level 1 LLM / TEI Ingestion Classification
         l1_start = time.time()
         l1_is_important = True
-        try:
-            l1_payload = {
-                "model": triage_model,
-                "messages": [
-                    {"role": "system", "content": l1_system},
-                    {"role": "user", "content": l1_prompt}
-                ],
-                "temperature": 0.0
-            }
-            resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l1_payload)
-            resp.raise_for_status()
-            resp_json = resp.json()
-            
-            usage = resp_json.get("usage", {})
-            metrics["level_1_prompt_tokens"] = usage.get("prompt_tokens", 0)
-            metrics["level_1_completion_tokens"] = usage.get("completion_tokens", 0)
-            
-            content = resp_json["choices"][0]["message"]["content"]
-            result_dict = json.loads(extract_json(content))
-            
-            l1_is_important = result_dict.get("is_important", True)
-            metrics["reason"] = result_dict.get("reason", "No reason provided")
-            metrics["score"] = result_dict.get("confidence_score", 1.0)
-            metrics["triage_level"] = "Level 1"
-            
-        except Exception as e:
-            logger.error("Level 1 failed for email %s: %s", msg_id, e)
-            if 'content' in locals():
-                logger.error("Raw unparsed Level 1 response text was: \n%s", content)
-            elif 'resp' in locals():
-                logger.error("Raw server response text was: \n%s", resp.text)
-            metrics["reason"] = f"Level 1 failure: {str(e)}"
-            has_error = True
-            l1_is_important = True # Escalate on error for safety
-            
-        metrics["level_1_duration_sec"] = time.time() - l1_start
+        
+        triage_type = config.get("triage_type", "llm")
+        if triage_type == "tei":
+            tei_url = config.get("tei_url", "http://10.100.0.50:8077/predict")
+            tei_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
+            try:
+                resp = http_client.post(tei_url, json={"inputs": tei_text})
+                resp.raise_for_status()
+                predictions = resp.json()
+                
+                winning_pred = max(predictions, key=lambda x: x.get("score", 0.0))
+                winning_label = winning_pred.get("label", "").lower()
+                winning_score = winning_pred.get("score", 1.0)
+                
+                l1_is_important = ("entailment" in winning_label and "not_" not in winning_label) or "important" in winning_label
+                metrics["reason"] = f"[TEI] winning label: '{winning_label}'"
+                metrics["score"] = winning_score
+                metrics["triage_level"] = "Level 1"
+            except Exception as e:
+                logger.error("Level 1 TEI failed for email %s: %s", msg_id, e)
+                metrics["reason"] = f"Level 1 TEI failure: {str(e)}"
+                has_error = True
+                l1_is_important = True
+            metrics["level_1_duration_sec"] = time.time() - l1_start
+        else:
+            l1_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
+            l1_system = (
+                "You are an expert executive assistant. Filter out automated updates, social notifications, "
+                "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
+                "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly three fields: "
+                "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
+            )
+            try:
+                l1_payload = {
+                    "model": triage_model,
+                    "messages": [
+                        {"role": "system", "content": l1_system},
+                        {"role": "user", "content": l1_prompt}
+                    ],
+                    "temperature": 0.0
+                }
+                resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l1_payload)
+                resp.raise_for_status()
+                resp_json = resp.json()
+                
+                usage = resp_json.get("usage", {})
+                metrics["level_1_prompt_tokens"] = usage.get("prompt_tokens", 0)
+                metrics["level_1_completion_tokens"] = usage.get("completion_tokens", 0)
+                
+                content = resp_json["choices"][0]["message"]["content"]
+                result_dict = json.loads(extract_json(content))
+                
+                l1_is_important = result_dict.get("is_important", True)
+                metrics["reason"] = result_dict.get("reason", "No reason provided")
+                metrics["score"] = result_dict.get("confidence_score", 1.0)
+                metrics["triage_level"] = "Level 1"
+                
+            except Exception as e:
+                logger.error("Level 1 failed for email %s: %s", msg_id, e)
+                if 'content' in locals():
+                    logger.error("Raw unparsed Level 1 response text was: \n%s", content)
+                elif 'resp' in locals():
+                    logger.error("Raw server response text was: \n%s", resp.text)
+                metrics["reason"] = f"Level 1 failure: {str(e)}"
+                has_error = True
+                l1_is_important = True # Escalate on error for safety
+                
+            metrics["level_1_duration_sec"] = time.time() - l1_start
         
         # 3. Level 2 Premium Summary (only if Level 1 marked important)
         if l1_is_important:

@@ -7,6 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class TriageSettings(BaseModel):
     confidence_threshold: float = 0.8
+    triage_type: str = "llm"
+    tei_url: str = "http://10.100.0.50:8077/predict"
     whitelist_domains: List[str] = []
     blacklist_keywords: List[str] = [
         "unsubscribe", "newsletter", "promotions", "marketing", 
@@ -65,6 +67,10 @@ class Settings(BaseSettings):
                 triage_data = yaml_data.get("triage", {})
                 if "confidence_threshold" in triage_data:
                     self.triage.confidence_threshold = float(triage_data["confidence_threshold"])
+                if "triage_type" in triage_data:
+                    self.triage.triage_type = triage_data["triage_type"]
+                if "tei_url" in triage_data:
+                    self.triage.tei_url = triage_data["tei_url"]
                 if "whitelist_domains" in triage_data:
                     self.triage.whitelist_domains = triage_data["whitelist_domains"]
                 if "blacklist_keywords" in triage_data:

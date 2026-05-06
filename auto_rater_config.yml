@@ -1,4 +1,9 @@
 test_configurations:
+  - name: "tei_classifier_pair"
+    triage_type: "tei"
+    triage_model: "local-tei-bge-nli"
+    summary_model: "deepseek/deepseek-v4-pro"
+    tei_url: "http://10.100.0.50:8077/predict"
   - name: "gemma4e4b"
     triage_model: "homedesk/gemma-4-e4b"
     summary_model: "homedesk/gemma-4-e4b"

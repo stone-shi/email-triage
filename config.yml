@@ -5,6 +5,8 @@ llm:
 
 triage:
   confidence_threshold: 0.8
+  triage_type: "llm"
+  tei_url: "http://10.100.0.50:8077/predict"
   whitelist_domains:
     - "@shifamily.com"
   blacklist_keywords:

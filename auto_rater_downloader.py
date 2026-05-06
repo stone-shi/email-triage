@@ -68,8 +68,17 @@ def main() -> None:
         logger.error("Gmail service client not available.")
         sys.exit(1)
         
+    existing_ids = set()
     offline_dataset: List[Dict[str, Any]] = []
-    
+    if output_path.exists():
+        try:
+            with open(output_path, "r", encoding="utf-8") as f:
+                offline_dataset = json.load(f)
+            existing_ids = {e["id"] for e in offline_dataset}
+            logger.info("Loaded %d existing unique cached items from offline corpus.", len(offline_dataset))
+        except Exception:
+            offline_dataset = []
+            
     try:
         # List the latest messages matching the query up to the specified count
         logger.info("Listing messages from user profile...")
@@ -84,6 +93,10 @@ def main() -> None:
         
         for idx, msg in enumerate(messages, 1):
             msg_id = msg["id"]
+            if msg_id in existing_ids:
+                logger.info("[%d/%d] Skipping already cached email ID: %s", idx, len(messages), msg_id)
+                continue
+                
             try:
                 # Fetch metadata headers
                 msg_meta = gmail.service.users().messages().get(

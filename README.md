@@ -85,5 +85,32 @@ Enables full interactive OAuth re-authorization inside remote server terminals o
 
 ---
 
+## 📊 Auto Rater: Testing & Benchmarking Suite
+
+The system incorporates a high-fidelity automated testing suite called **Auto Rater** to download offline datasets, execute side-by-side model benchmarking, and evaluate classification accuracy and summarization quality without affecting the production database.
+
+All generated result JSON streams and markdown analysis reports are neatly isolated inside the `auto_rater_data/` directory.
+
+### Execution Workflow Tiers
+
+1. **Batch Ingestion Downloader**: Pulls a configurable volume of recent messages offline into plain text body schemas:
+   ```bash
+   ./venv/bin/python3 auto_rater_downloader.py
+   ```
+2. **Isolated Benchmark Runner**: Loops over the paired configurations specified inside `auto_rater_config.yml`, executing all email triage steps with fine-grained prompt/completion token tallies and duration metrics:
+   ```bash
+   ./venv/bin/python3 auto_rater_runner.py
+   ```
+3. **Triage Classifier Rater**: Calculates precision, recall, relative accuracy, and balanced F1 scores relative to your gold standard reference baseline pair configuration:
+   ```bash
+   ./venv/bin/python3 auto_rater_triage.py
+   ```
+4. **LLM-as-a-Judge Summary Rater**: Uses a premium judge model to score executive summaries on a strict 1-10 scale for factuality, conciseness, and actionability:
+   ```bash
+   ./venv/bin/python3 auto_rater_summarizer.py
+   ```
+
+---
+
 ## 🗄 Local Storage & Auditing
 - **`email_cache.db`**: Local SQLite database containing active `Message-ID` hashes to ensure duplicate emails are skipped instantly on subsequent scans, alongside token log counters auditing proxy usage histories.

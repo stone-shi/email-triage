@@ -1,5 +1,6 @@
 import json
 import logging
+import argparse
 import yaml
 import sys
 import time
@@ -31,6 +32,18 @@ def main() -> None:
     emails_path = data_dir / "offline_emails.json"
     result_files = list(data_dir.glob("auto_rater_results_*.json"))
     
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Auto Rater Summarization Report Compiler Utility")
+    parser.add_argument("--compare", type=str, help="Name of a single experimental result configuration to evaluate specifically")
+    args = parser.parse_args()
+    
+    if args.compare:
+        result_files = [f for f in result_files if f.name == f"auto_rater_results_{args.compare}.json"]
+        if not result_files:
+            logger.error("No result data file found for configuration: '%s'", args.compare)
+            sys.exit(1)
+        logger.info("Targeted quality evaluation active for configuration: '%s'", args.compare)
+        
     if not config_path.exists() or not emails_path.exists() or not result_files:
         logger.error("Required testing files or configuration data are missing.")
         sys.exit(1)

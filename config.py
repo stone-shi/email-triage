@@ -60,18 +60,6 @@ class Settings(BaseSettings):
                 if "triage_model" in llm_data: self.triage_model = llm_data["triage_model"]
                 if "summary_model" in llm_data: self.summary_model = llm_data["summary_model"]
                 
-                # Map Gmail section
-                gmail_data = yaml_data.get("gmail", {})
-                if "credentials_path" in gmail_data: self.gmail_credentials_path = Path(gmail_data["credentials_path"])
-                if "token_path" in gmail_data: self.gmail_token_path = Path(gmail_data["token_path"])
-                if "account" in gmail_data: self.gmail_account = gmail_data["account"]
-                
-                # Map IMAP section
-                imap_data = yaml_data.get("imap", {})
-                if "host" in imap_data: self.imap_host = imap_data["host"]
-                if "port" in imap_data: self.imap_port = int(imap_data["port"])
-                if "login" in imap_data: self.imap_login = imap_data["login"]
-                
                 # Map Triage section
                 triage_data = yaml_data.get("triage", {})
                 if "confidence_threshold" in triage_data:

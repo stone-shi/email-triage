@@ -3,16 +3,6 @@ llm:
   triage_model: "deepseek/deepseek-v4-flash"
   summary_model: "deepseek/deepseek-v4-pro"
 
-gmail:
-  credentials_path: "credentials.json"
-  token_path: "token.json"
-  account: "your_email@gmail.com"
-
-imap:
-  host: "imap.zoho.com"
-  port: 993
-  login: "your_email@domain.com"
-
 triage:
   confidence_threshold: 0.8
   whitelist_domains:

@@ -139,10 +139,13 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 metrics["level_0_judge_correctness"] = "Audit Failed"
                 metrics["level_0_judge_score"] = 0.0
                 metrics["level_0_judge_reason"] = str(audit_err)
+                continue # Skip caching if judge audit failed
 
             metrics["total_email_process_duration_sec"] = time.time() - email_start_time
             run_results.append(metrics)
             continue
+            
+        has_error = False
             
         # 2. Level 1 LLM Classification
         l1_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
@@ -187,6 +190,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             elif 'resp' in locals():
                 logger.error("Raw server response text was: \n%s", resp.text)
             metrics["reason"] = f"Level 1 failure: {str(e)}"
+            has_error = True
             l1_is_important = True # Escalate on error for safety
             
         metrics["level_1_duration_sec"] = time.time() - l1_start
@@ -234,9 +238,14 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                     elif 'resp' in locals():
                         logger.error("Raw server response text was: \n%s", resp.text)
                     metrics["summary"] = f"Level 2 summarization error: {str(e)}"
+                    has_error = True
                     
                 metrics["level_2_duration_sec"] = time.time() - l2_start
                 
+        if has_error:
+            logger.warning("Omitting email %s from results cache due to runtime LLM endpoint error.", msg_id)
+            continue
+            
         metrics["total_email_process_duration_sec"] = time.time() - email_start_time
         run_results.append(metrics)
         

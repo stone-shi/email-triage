@@ -1,7 +1,7 @@
 test_configurations:
-  - name: "phi-4-mini"
-    triage_model: "homedesk/phi-4-mini-reasoning"
-    summary_model: "homedesk/phi-4-mini-reasoning"
+  - name: "gemma4e4b"
+    triage_model: "homedesk/gemma-4-e4b"
+    summary_model: "homedesk/gemma-4-e4b"
   - name: "qwen3.5-0.8b"
     triage_model: "homedesk/qwen3.5-0.8b"
     summary_model: "homedesk/qwen3.5-0.8b"

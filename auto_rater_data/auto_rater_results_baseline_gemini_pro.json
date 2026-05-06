@@ -2,7 +2,8 @@
   "configuration_name": "baseline_gemini_pro",
   "triage_model": "gemini/gemini-3.1-pro-preview",
   "summary_model": "gemini/gemini-3.1-pro-preview",
-  "total_processing_all_emails_duration_sec": 5543.212310791016,
+  "offline_emails_timestamp": 1778082817.0312726,
+  "total_processing_all_emails_duration_sec": 1.3828277587890625e-05,
   "total_emails_processed": 100,
   "results": [
     {

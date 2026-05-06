@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     imap_host: str = "imap.zoho.com"
     imap_port: int = 993
     imap_login: str = "your_email@domain.com"
-    imap_password: str = "your_app_password_here"
+    imap_password: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_IMAP_PASSWORD", ""))
 
     triage: TriageSettings = Field(default_factory=TriageSettings)
 
@@ -71,7 +71,6 @@ class Settings(BaseSettings):
                 if "host" in imap_data: self.imap_host = imap_data["host"]
                 if "port" in imap_data: self.imap_port = int(imap_data["port"])
                 if "login" in imap_data: self.imap_login = imap_data["login"]
-                if "password" in imap_data: self.imap_password = imap_data["password"]
                 
                 # Map Triage section
                 triage_data = yaml_data.get("triage", {})

@@ -12,7 +12,6 @@ imap:
   host: "imap.zoho.com"
   port: 993
   login: "your_email@domain.com"
-  password: "your_app_password_here"
 
 triage:
   confidence_threshold: 0.8

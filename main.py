@@ -136,8 +136,9 @@ def main() -> None:
 
     # Configure logging based on human_mode flag
     if args.human:
+        log_level_numeric = getattr(logging, settings.log_level, logging.INFO)
         logging.basicConfig(
-            level=logging.INFO,
+            level=log_level_numeric,
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             handlers=[logging.StreamHandler(sys.stdout)]
         )

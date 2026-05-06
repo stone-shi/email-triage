@@ -51,6 +51,11 @@ def main() -> None:
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f) or {}
         
+    log_level = config_data.get("log_level", "INFO").upper()
+    numeric_level = getattr(logging, log_level, logging.INFO)
+    logging.getLogger().setLevel(numeric_level)
+    logger.setLevel(numeric_level)
+        
     with open(emails_path, "r") as f:
         emails_list = json.load(f)
         

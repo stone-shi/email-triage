@@ -139,6 +139,10 @@ class EmailTriageEngine:
             
         except Exception as e:
             logger.error("Level 1 LiteLLM proxy classification failed: %s. Defaulting to True for safety.", e)
+            if 'content' in locals():
+                logger.error("Raw unparsed Level 1 response text was: \n%s", content)
+            elif 'response' in locals():
+                logger.error("Raw proxy server response status body text was: \n%s", response.text)
             return True, f"Proxy error: {e}", 1.0
 
     def run_level_2_summarization(self, subject: str, full_body: str) -> Tuple[str, float]:
@@ -196,6 +200,10 @@ class EmailTriageEngine:
             return result.summary, result.confidence_score
         except Exception as e:
             logger.error("Level 2 LiteLLM summarization failed: %s", e)
+            if 'content' in locals():
+                logger.error("Raw unparsed Level 2 response text was: \n%s", content)
+            elif 'response' in locals():
+                logger.error("Raw proxy server response body text was: \n%s", response.text)
             return f"Failed to generate proxy summary due to error: {e}", 1.0
 
     def run_level_1_premium_escalation(self, sender: str, subject: str, snippet: str, full_body: str) -> Tuple[bool, str, float]:
@@ -242,4 +250,8 @@ class EmailTriageEngine:
             
         except Exception as e:
             logger.error("Premium triage escalation failed: %s. Safely returning True.", e)
+            if 'content' in locals():
+                logger.error("Raw unparsed premium escalation response text was: \n%s", content)
+            elif 'response' in locals():
+                logger.error("Raw proxy server response body text was: \n%s", response.text)
             return True, f"Escalation error: {e}", 1.0

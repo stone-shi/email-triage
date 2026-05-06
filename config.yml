@@ -20,3 +20,6 @@ triage:
     - "spammer@domain.com"
     - "offers@"
     - "newsletters@"
+
+logging:
+  level: "INFO"

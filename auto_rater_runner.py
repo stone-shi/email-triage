@@ -182,6 +182,10 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             
         except Exception as e:
             logger.error("Level 1 failed for email %s: %s", msg_id, e)
+            if 'content' in locals():
+                logger.error("Raw unparsed Level 1 response text was: \n%s", content)
+            elif 'resp' in locals():
+                logger.error("Raw server response text was: \n%s", resp.text)
             metrics["reason"] = f"Level 1 failure: {str(e)}"
             l1_is_important = True # Escalate on error for safety
             
@@ -225,6 +229,10 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                     
                 except Exception as e:
                     logger.error("Level 2 failed for email %s: %s", msg_id, e)
+                    if 'content' in locals():
+                        logger.error("Raw unparsed Level 2 response text was: \n%s", content)
+                    elif 'resp' in locals():
+                        logger.error("Raw server response text was: \n%s", resp.text)
                     metrics["summary"] = f"Level 2 summarization error: {str(e)}"
                     
                 metrics["level_2_duration_sec"] = time.time() - l2_start
@@ -264,6 +272,12 @@ def main() -> None:
         
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f) or {}
+        
+    # Dynamically calibrate logging thresholds
+    log_level = config_data.get("log_level", "INFO").upper()
+    numeric_level = getattr(logging, log_level, logging.INFO)
+    logging.getLogger().setLevel(numeric_level)
+    logger.setLevel(numeric_level)
         
     with open(emails_path, "r") as f:
         emails = json.load(f)

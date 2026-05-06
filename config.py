@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://your-llm-proxy.com/v1"
     triage_model: str = "deepseek/deepseek-v4-flash"
     summary_model: str = "deepseek/deepseek-v4-pro"
+    log_level: str = "INFO"
 
     # API Secret Keys kept strictly in environment context
     gemini_api_key: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
@@ -70,6 +71,11 @@ class Settings(BaseSettings):
                     self.triage.blacklist_keywords = triage_data["blacklist_keywords"]
                 if "blacklist_senders" in triage_data:
                     self.triage.blacklist_senders = triage_data["blacklist_senders"]
+                    
+                # Map Logging section
+                logging_data = yaml_data.get("logging", {})
+                if "level" in logging_data:
+                    self.log_level = logging_data["level"].upper()
                     
             except Exception as e:
                 # Fallback gracefully to default initialization strings on error

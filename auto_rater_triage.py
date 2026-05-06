@@ -115,6 +115,11 @@ def main() -> None:
             with open(config_path, "r", encoding="utf-8") as cfg_f:
                 config_data = yaml.safe_load(cfg_f) or {}
             baseline_name = config_data.get("baseline_configuration_name", baseline_name)
+            
+            log_level = config_data.get("log_level", "INFO").upper()
+            numeric_level = getattr(logging, log_level, logging.INFO)
+            logging.getLogger().setLevel(numeric_level)
+            logger.setLevel(numeric_level)
         except Exception:
             pass
 

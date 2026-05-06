@@ -36,6 +36,11 @@ def main() -> None:
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
         
+    log_level = config.get("log_level", "INFO").upper()
+    numeric_level = getattr(logging, log_level, logging.INFO)
+    logging.getLogger().setLevel(numeric_level)
+    logger.setLevel(numeric_level)
+        
     count = config.get("download_count", 20)
     
     # Build Gmail API search query string dynamically

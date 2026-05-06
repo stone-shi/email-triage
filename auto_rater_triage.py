@@ -1,5 +1,6 @@
 import json
 import logging
+import argparse
 import yaml
 import sys
 from pathlib import Path
@@ -116,6 +117,17 @@ def main() -> None:
             baseline_name = config_data.get("baseline_configuration_name", baseline_name)
         except Exception:
             pass
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Auto Rater Triage Report Compiler Utility")
+    parser.add_argument("--compare", type=str, help="Name of a single experimental result configuration to compare against the baseline")
+    args = parser.parse_args()
+    
+    if args.compare:
+        baseline_filename = f"auto_rater_results_{baseline_name}.json"
+        compare_filename = f"auto_rater_results_{args.compare}.json"
+        result_files = [f for f in result_files if f.name == baseline_filename or f.name == compare_filename]
+        logger.info("Targeted comparison active: comparing '%s' against baseline standard '%s'", args.compare, baseline_name)
 
     report = analyze_results(result_files, baseline_name)
     

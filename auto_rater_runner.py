@@ -27,11 +27,23 @@ def extract_json(text: str) -> str:
             return match.group(1).strip()
     return text
 
-def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str) -> None:
+def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, emails_timestamp: float, force_rerun: bool = False) -> None:
     config_name = config["name"]
     triage_model = config["triage_model"]
     summary_model = config["summary_model"]
     
+    output_file = workspace_dir / "auto_rater_data" / f"auto_rater_results_{config_name}.json"
+    
+    existing_results: Dict[str, Dict[str, Any]] = {}
+    if output_file.exists() and not force_rerun:
+        try:
+            with open(output_file, "r", encoding="utf-8") as out_f:
+                old_payload = json.load(out_f)
+            existing_results = {r["message_id"]: r for r in old_payload.get("results", [])}
+            logger.info("Incremental Mode Active: Loaded %d already processed items from cache.", len(existing_results))
+        except Exception:
+            existing_results = {}
+
     logger.info("==================================================")
     logger.info("Executing Test Configuration: '%s'", config_name)
     logger.info("Triage Model: %s | Summary Model: %s", triage_model, summary_model)
@@ -59,6 +71,11 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         full_body = email["full_body"]
         msg_id = email["message_id"]
         
+        # Cache Skip Layer Conditional Check: Unchanged Model + Message ID cached match
+        if msg_id in existing_results and not force_rerun:
+            run_results.append(existing_results[msg_id])
+            continue
+            
         email_start_time = time.time()
         
         # Initialize default metrics record matching user requirements
@@ -222,19 +239,17 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         "configuration_name": config_name,
         "triage_model": triage_model,
         "summary_model": summary_model,
+        "offline_emails_timestamp": emails_timestamp,
         "total_processing_all_emails_duration_sec": total_duration,
         "total_emails_processed": len(emails),
         "results": run_results
     }
     
-    output_path = workspace_dir / "auto_rater_data" / f"auto_rater_results_{config_name}"
-    # Ensure folder exists
     output_path.parent.mkdir(exist_ok=True)
-    output_path = output_path.with_suffix(".json")
-    with open(output_path, "w", encoding="utf-8") as out_f:
+    with open(output_file, "w", encoding="utf-8") as out_f:
         json.dump(output_payload, out_f, indent=2, ensure_ascii=False)
         
-    logger.info("Finished test run for '%s'. Results saved pretty to %s", config_name, output_path)
+    logger.info("Finished test run for '%s'. Results saved pretty to %s", config_name, output_file)
 
 def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
@@ -244,6 +259,8 @@ def main() -> None:
     if not config_path.exists() or not emails_path.exists():
         logger.error("Required files missing. Make sure config and offline_emails.json exist.")
         sys.exit(1)
+        
+    emails_timestamp = emails_path.stat().st_mtime
         
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f) or {}
@@ -273,13 +290,39 @@ def main() -> None:
     
     for cfg in configs:
         cfg_name = cfg.get("name")
+        triage_model = cfg.get("triage_model")
+        summary_model = cfg.get("summary_model")
         output_file = workspace_dir / "auto_rater_data" / f"auto_rater_results_{cfg_name}.json"
-        if output_file.exists() and not args.force:
-            logger.info("Result file already exists for configuration '%s'. Skipping run to save token cost. Use -f or --force to overwrite.", cfg_name)
-            continue
-            
+        
+        if output_file.exists():
+            try:
+                with open(output_file, "r", encoding="utf-8") as out_f:
+                    existing_data = json.load(out_f)
+            except Exception:
+                existing_data = {}
+                
+            # 1. Migration Layer Pass: Lacks timestamp metadata field entirely
+            if "offline_emails_timestamp" not in existing_data:
+                existing_data["offline_emails_timestamp"] = emails_timestamp
+                with open(output_file, "w", encoding="utf-8") as out_f:
+                    json.dump(existing_data, out_f, indent=2, ensure_ascii=False)
+                logger.info("Schema Migration: Legacy result file upgraded in-place with timestamp for '%s'. Skipping execution pass.", cfg_name)
+                continue
+                
+            # 2. Model Definition Modifications Guard Abort Check
+            if existing_data.get("triage_model") != triage_model or existing_data.get("summary_model") != summary_model:
+                if not args.force:
+                    logger.error("⚠️ WARNING: Model configuration strings changed for profile '%s' (Triage: %s -> %s, Summary: %s -> %s). Execution aborted to protect data integrity. Use -f/--force to override and overwrite.", cfg_name, existing_data.get("triage_model"), triage_model, existing_data.get("summary_model"), summary_model)
+                    sys.exit(1)
+                logger.info("Force override active: Overwriting modified model pairs for configuration '%s'...", cfg_name)
+                
+            # 3. Timestamp Caching Check Pass
+            if emails_timestamp <= existing_data.get("offline_emails_timestamp", 0) and not args.force:
+                logger.info("Result file already exists and dataset is up to date for configuration '%s'. Skipping run to save token cost. Use -f or --force to overwrite.", cfg_name)
+                continue
+        
         try:
-            run_config(cfg, emails, workspace_dir, judge_model)
+            run_config(cfg, emails, workspace_dir, judge_model, emails_timestamp, force_rerun=args.force)
         except Exception as e:
             logger.error("Configuration run failed for %s: %s", cfg_name, e)
             continue

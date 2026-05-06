@@ -5,7 +5,7 @@ description: Orchestrates email ingestion from Gmail and IMAP, applies multi-sta
 
 # Email Triage Engine
 
-This skill provides procedural knowledge for running the Email Triage & Summarization Engine via `main.py` and interpreting its structured JSON output. 
+This skill provides procedural knowledge for running the Email Triage & Summarization Engine via `email-triage.sh` and interpreting its structured JSON output. 
 
 ## Execution Workflow
 
@@ -16,7 +16,7 @@ The engine is designed to be run as a standalone script that emits a JSON array 
 To fetch and process all unread emails from configured Gmail and IMAP accounts:
 
 ```bash
-python main.py
+email-triage.sh
 ```
 
 ### Command-Line Arguments
@@ -28,7 +28,7 @@ python main.py
 
 ## Interpreting JSON Output
 
-By default, `main.py` outputs a JSON list where each element represents an email processed by the engine (unless it was skipped by the cache).
+By default, `email-triage.sh` outputs a JSON list where each element represents an email processed by the engine (unless it was skipped by the cache).
 
 ### Triage Levels
 
@@ -41,11 +41,11 @@ For a detailed breakdown of the JSON schema for each level, see [references/outp
 ## Common Tasks
 
 ### 1. Daily Summary
-Run `python main.py` and filter the results for `triage_level == "Level 2"` to generate a report of important items.
+Run `email-triage.sh` and filter the results for `triage_level == "Level 2"` to generate a report of important items.
 
 ### 2. Re-authentication
 If Gmail ingestion fails with auth errors, instruct the user to run:
-`python main.py --auth --human` (or `--headless` if on a remote server).
+`email-triage.sh --auth --human` (or `--headless` if on a remote server).
 
 ### 3. Debugging Noise Filters
 If a legitimate email was caught by Level 0, search for it in the JSON output to find the specific `reason` (keyword match) and update `config.py` if necessary.

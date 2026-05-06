@@ -10,5 +10,5 @@ test_configurations:
     summary_model: "gemini/gemini-3.1-pro-preview"
 
 download_count: 100
-judge_model: "deepseek/deepseek-v4-pro"
+judge_model: "gemini/gemini-3.1-pro-preview"
 baseline_configuration_name: "baseline_gemini_pro"

@@ -5,14 +5,11 @@ description: Orchestrates email ingestion from Gmail and IMAP, applies multi-sta
 
 # Email Triage Engine
 
-This skill provides procedural knowledge for running the Email Triage & Summarization Engine via `main.py` and interpreting its structured JSON output. All executable code is under scripts/.
+This skill provides procedural knowledge for running the Email Triage & Summarization Engine via `main.py` and interpreting its structured JSON output. 
 
 ## Execution Workflow
 
 The engine is designed to be run as a standalone script that emits a JSON array to `stdout`.
-All python code is under ./scripts/
-It use python venv. If venv/ folder doesn't exist, run `python3 -m venv venv` then install dependencies from requirement.txt
-Then you can use ./venv/bin/python3 main.py 
 
 ### Basic Usage
 

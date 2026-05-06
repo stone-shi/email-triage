@@ -257,9 +257,9 @@ def main() -> None:
         logger.error("No test configurations found in config file.")
         sys.exit(1)
         
-    # Parse command line arguments
     parser = argparse.ArgumentParser(description="Auto Rater Benchmarking Runner")
     parser.add_argument("--run", type=str, help="Name of a single test configuration pair to execute specifically")
+    parser.add_argument("-f", "--force", action="store_true", help="Force execution and overwrite existing benchmark results file")
     args = parser.parse_args()
     
     if args.run:
@@ -272,10 +272,16 @@ def main() -> None:
     logger.info("Loaded %d offline emails. Starting benchmarking configurations...", len(emails))
     
     for cfg in configs:
+        cfg_name = cfg.get("name")
+        output_file = workspace_dir / "auto_rater_data" / f"auto_rater_results_{cfg_name}.json"
+        if output_file.exists() and not args.force:
+            logger.info("Result file already exists for configuration '%s'. Skipping run to save token cost. Use -f or --force to overwrite.", cfg_name)
+            continue
+            
         try:
             run_config(cfg, emails, workspace_dir, judge_model)
         except Exception as e:
-            logger.error("Configuration run failed for %s: %s", cfg.get("name"), e)
+            logger.error("Configuration run failed for %s: %s", cfg_name, e)
             continue
 
 if __name__ == "__main__":

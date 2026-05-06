@@ -47,5 +47,3 @@ Run `email-triage.sh` and filter the results for `triage_level == "Level 2"` to 
 If Gmail ingestion fails with auth errors, instruct the user to run:
 `email-triage.sh --auth --human` (or `--headless` if on a remote server).
 
-### 3. Debugging Noise Filters
-If a legitimate email was caught by Level 0, search for it in the JSON output to find the specific `reason` (keyword match) and update `config.py` if necessary.

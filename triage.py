@@ -50,6 +50,11 @@ class EmailTriageEngine:
         """
         combined_text = f"{sender} {subject}".lower()
         
+        for domain in getattr(settings.triage, "whitelist_domains", []):
+            if domain.lower() in sender.lower():
+                logger.info("Level 0 Whitelist hit: Sender domain '%s' is whitelisted. Bypassing noise filter.", domain)
+                return False, None
+        
         for kw in settings.triage.blacklist_keywords:
             if kw.lower() in combined_text:
                 reason = f"Static filter hit: noise keyword '{kw}' matched"
@@ -192,3 +197,49 @@ class EmailTriageEngine:
         except Exception as e:
             logger.error("Level 2 LiteLLM summarization failed: %s", e)
             return f"Failed to generate proxy summary due to error: {e}", 1.0
+
+    def run_level_1_premium_escalation(self, sender: str, subject: str, snippet: str, full_body: str) -> Tuple[bool, str, float]:
+        """
+        Secondary Premium Triage Escalation layer: Uses the premium summary model and full text body 
+        to re-evaluate borderline/ambiguous classification choices definitively.
+        """
+        prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}\nFull Body Content:\n{full_body[:6000]}"
+        system_instruction = (
+            "You are a premium AI operations auditor resolving an ambiguous email priority classification query. "
+            "Filter out automated noise, promotions, and notifications. Mark as important only actionable, high-priority human "
+            "conversations, business critical text streams, or direct requests requiring attention.\n"
+            "You MUST return a valid JSON object containing exactly three fields: "
+            "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
+        )
+        
+        url = f"{self.base_url}/chat/completions"
+        payload = {
+            "model": settings.summary_model,
+            "messages": [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.0,
+        }
+        
+        try:
+            logger.info("Ambiguity Triage Escalation sent to premium model: %s", settings.summary_model)
+            response = self.http_client.post(url, headers=self.headers, json=payload)
+            response.raise_for_status()
+            
+            resp_json = response.json()
+            usage = resp_json.get("usage", {})
+            tokens_used = usage.get("total_tokens", self._estimate_tokens(prompt) + 40)
+            self.db.log_token_usage("premium_triage_escalation", settings.summary_model, tokens_used)
+            
+            content = resp_json["choices"][0]["message"]["content"]
+            json_content = self._extract_json(content)
+            result_dict = json.loads(json_content)
+            
+            result = TriageDecision.model_validate(result_dict)
+            logger.info("Premium Escalation result for '%s': Important=%s (Reason: %s, Score: %s)", subject, result.is_important, result.reason, result.confidence_score)
+            return result.is_important, result.reason, result.confidence_score
+            
+        except Exception as e:
+            logger.error("Premium triage escalation failed: %s. Safely returning True.", e)
+            return True, f"Escalation error: {e}", 1.0

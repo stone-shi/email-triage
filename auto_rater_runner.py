@@ -1,0 +1,268 @@
+import json
+import logging
+import sys
+import time
+from pathlib import Path
+from typing import List, Dict, Any
+import httpx
+from config import settings
+from triage import EmailTriageEngine
+from db import EmailDB
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] auto_rater_runner: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("auto_rater_runner")
+
+def extract_json(text: str) -> str:
+    import re
+    text = text.strip()
+    if text.startswith("```"):
+        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+    return text
+
+def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str) -> None:
+    config_name = config["name"]
+    triage_model = config["triage_model"]
+    summary_model = config["summary_model"]
+    
+    logger.info("==================================================")
+    logger.info("Executing Test Configuration: '%s'", config_name)
+    logger.info("Triage Model: %s | Summary Model: %s", triage_model, summary_model)
+    logger.info("==================================================")
+    
+    base_url = settings.llm_base_url.rstrip('/')
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.llm_api_key}"
+    }
+    
+    http_client = httpx.Client(timeout=1800.0)
+    run_results: List[Dict[str, Any]] = []
+    
+    # Initialize triage engine for static filtering logic (Level 0)
+    dummy_db = EmailDB(db_path=workspace_dir / "email_cache.db")
+    engine = EmailTriageEngine(dummy_db)
+    
+    total_start_time = time.time()
+    
+    for idx, email in enumerate(emails, 1):
+        sender = email["sender"]
+        subject = email["subject"]
+        snippet = email["snippet"]
+        full_body = email["full_body"]
+        msg_id = email["message_id"]
+        
+        email_start_time = time.time()
+        
+        # Initialize default metrics record matching user requirements
+        metrics = {
+            "triage_level": "Level 0",
+            "message_id": msg_id,
+            "account": email["account"],
+            "sender": sender,
+            "subject": subject,
+            "date": email["date"],
+            "reason": "Passed static filter",
+            "summary": None,
+            "score": 1.0,
+            "model_used_triage": triage_model,
+            "model_used_summary": summary_model,
+            "level_1_duration_sec": 0.0,
+            "level_2_duration_sec": 0.0,
+            "level_1_prompt_tokens": 0,
+            "level_1_completion_tokens": 0,
+            "level_2_prompt_tokens": 0,
+            "level_2_completion_tokens": 0,
+            "total_email_process_duration_sec": 0.0,
+            "level_0_judge_correctness": "N/A",
+            "level_0_judge_score": 1.0,
+            "level_0_judge_reason": None
+        }
+        
+        # 1. Level 0 Static Filter
+        is_noise, l0_reason = engine.run_level_0_static(sender, subject)
+        if is_noise:
+            metrics["triage_level"] = "Level 0"
+            metrics["reason"] = l0_reason
+            
+            # Use judge_model to verify if the Level 0 filter was actually correct
+            l0_audit_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
+            l0_audit_system = (
+                "You are an expert email auditor. Review the email metadata to determine if it is truly low priority noise "
+                "(e.g., automated notifications, transactional marketing, newsletters, spam) or if it was a false positive "
+                "that actually contains high priority business communication or a critical personal update.\n"
+                "You MUST return a valid JSON object containing exactly three fields: "
+                "'is_actually_low_priority' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
+            )
+            try:
+                l0_payload = {
+                    "model": judge_model,
+                    "messages": [
+                        {"role": "system", "content": l0_audit_system},
+                        {"role": "user", "content": l0_audit_prompt}
+                    ],
+                    "temperature": 0.0
+                }
+                resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l0_payload)
+                resp.raise_for_status()
+                audit_dict = json.loads(extract_json(resp.json()["choices"][0]["message"]["content"]))
+                
+                metrics["level_0_judge_correctness"] = "Correct" if audit_dict.get("is_actually_low_priority", True) else "False Positive"
+                metrics["level_0_judge_score"] = audit_dict.get("confidence_score", 1.0)
+                metrics["level_0_judge_reason"] = audit_dict.get("reason", "")
+            except Exception as audit_err:
+                logger.error("Level 0 judge audit failed: %s", audit_err)
+                metrics["level_0_judge_correctness"] = "Audit Failed"
+                metrics["level_0_judge_score"] = 0.0
+                metrics["level_0_judge_reason"] = str(audit_err)
+
+            metrics["total_email_process_duration_sec"] = time.time() - email_start_time
+            run_results.append(metrics)
+            continue
+            
+        # 2. Level 1 LLM Classification
+        l1_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
+        l1_system = (
+            "You are an expert executive assistant. Filter out automated updates, social notifications, "
+            "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
+            "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly three fields: "
+            "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
+        )
+        
+        l1_start = time.time()
+        l1_is_important = True
+        try:
+            l1_payload = {
+                "model": triage_model,
+                "messages": [
+                    {"role": "system", "content": l1_system},
+                    {"role": "user", "content": l1_prompt}
+                ],
+                "temperature": 0.0
+            }
+            resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l1_payload)
+            resp.raise_for_status()
+            resp_json = resp.json()
+            
+            usage = resp_json.get("usage", {})
+            metrics["level_1_prompt_tokens"] = usage.get("prompt_tokens", 0)
+            metrics["level_1_completion_tokens"] = usage.get("completion_tokens", 0)
+            
+            content = resp_json["choices"][0]["message"]["content"]
+            result_dict = json.loads(extract_json(content))
+            
+            l1_is_important = result_dict.get("is_important", True)
+            metrics["reason"] = result_dict.get("reason", "No reason provided")
+            metrics["score"] = result_dict.get("confidence_score", 1.0)
+            metrics["triage_level"] = "Level 1"
+            
+        except Exception as e:
+            logger.error("Level 1 failed for email %s: %s", msg_id, e)
+            metrics["reason"] = f"Level 1 failure: {str(e)}"
+            l1_is_important = True # Escalate on error for safety
+            
+        metrics["level_1_duration_sec"] = time.time() - l1_start
+        
+        # 3. Level 2 Premium Summary (only if Level 1 marked important)
+        if l1_is_important:
+            metrics["triage_level"] = "Level 2"
+            if not full_body or len(full_body.strip()) < 10:
+                metrics["summary"] = "No substantive content to summarize."
+            else:
+                l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
+                l2_system = (
+                    "Create clear, precise bulleted executive summaries. Be brief and highlight any requested task, conclusion, or deadline. "
+                    "You MUST return a valid JSON object containing exactly two fields: 'summary' (string) and 'confidence_score' (float from 0.0 to 1.0)."
+                )
+                
+                l2_start = time.time()
+                try:
+                    l2_payload = {
+                        "model": summary_model,
+                        "messages": [
+                            {"role": "system", "content": l2_system},
+                            {"role": "user", "content": l2_prompt}
+                        ],
+                        "temperature": 0.2
+                    }
+                    resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
+                    resp.raise_for_status()
+                    resp_json = resp.json()
+                    
+                    usage = resp_json.get("usage", {})
+                    metrics["level_2_prompt_tokens"] = usage.get("prompt_tokens", 0)
+                    metrics["level_2_completion_tokens"] = usage.get("completion_tokens", 0)
+                    
+                    content = resp_json["choices"][0]["message"]["content"]
+                    result_dict = json.loads(extract_json(content))
+                    
+                    metrics["summary"] = result_dict.get("summary", "")
+                    metrics["score"] = result_dict.get("confidence_score", 1.0)
+                    
+                except Exception as e:
+                    logger.error("Level 2 failed for email %s: %s", msg_id, e)
+                    metrics["summary"] = f"Level 2 summarization error: {str(e)}"
+                    
+                metrics["level_2_duration_sec"] = time.time() - l2_start
+                
+        metrics["total_email_process_duration_sec"] = time.time() - email_start_time
+        run_results.append(metrics)
+        
+    total_duration = time.time() - total_start_time
+    
+    # Package wrapper container with complete benchmark group telemetry metadata
+    output_payload = {
+        "configuration_name": config_name,
+        "triage_model": triage_model,
+        "summary_model": summary_model,
+        "total_processing_all_emails_duration_sec": total_duration,
+        "total_emails_processed": len(emails),
+        "results": run_results
+    }
+    
+    output_path = workspace_dir / "auto_rater_data" / f"auto_rater_results_{config_name}"
+    # Ensure folder exists
+    output_path.parent.mkdir(exist_ok=True)
+    output_path = output_path.with_suffix(".json")
+    with open(output_path, "w", encoding="utf-8") as out_f:
+        json.dump(output_payload, out_f, indent=2, ensure_ascii=False)
+        
+    logger.info("Finished test run for '%s'. Results saved pretty to %s", config_name, output_path)
+
+def main() -> None:
+    workspace_dir = Path(__file__).parent.resolve()
+    config_path = workspace_dir / "auto_rater_config.json"
+    emails_path = workspace_dir / "auto_rater_data" / "offline_emails.json"
+    
+    if not config_path.exists() or not emails_path.exists():
+        logger.error("Required files missing. Make sure config and offline_emails.json exist.")
+        sys.exit(1)
+        
+    with open(config_path, "r") as f:
+        config_data = json.load(f)
+        
+    with open(emails_path, "r") as f:
+        emails = json.load(f)
+        
+    configs = config_data.get("test_configurations", [])
+    judge_model = config_data.get("judge_model", "deepseek/deepseek-v4-pro")
+    if not configs:
+        logger.error("No test configurations found in config file.")
+        sys.exit(1)
+        
+    logger.info("Loaded %d offline emails. Starting benchmarking configurations...", len(emails))
+    
+    for cfg in configs:
+        try:
+            run_config(cfg, emails, workspace_dir, judge_model)
+        except Exception as e:
+            logger.error("Configuration run failed for %s: %s", cfg.get("name"), e)
+            continue
+
+if __name__ == "__main__":
+    main()

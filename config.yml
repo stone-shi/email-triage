@@ -1,0 +1,33 @@
+llm:
+  base_url: "https://your-llm-proxy.com/v1"
+  triage_model: "deepseek/deepseek-v4-flash"
+  summary_model: "deepseek/deepseek-v4-pro"
+
+gmail:
+  credentials_path: "credentials.json"
+  token_path: "token.json"
+  account: "your_email@gmail.com"
+
+imap:
+  host: "imap.zoho.com"
+  port: 993
+  login: "your_email@domain.com"
+  password: "your_app_password_here"
+
+triage:
+  confidence_threshold: 0.8
+  whitelist_domains:
+    - "@shifamily.com"
+  blacklist_keywords:
+    - "unsubscribe"
+    - "newsletter"
+    - "promotions"
+    - "marketing"
+    - "no-reply"
+    - "noreply"
+    - "digest"
+    - "advertisement"
+  blacklist_senders:
+    - "spammer@domain.com"
+    - "offers@"
+    - "newsletters@"

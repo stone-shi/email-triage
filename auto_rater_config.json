@@ -1,0 +1,16 @@
+{
+  "test_configurations": [
+    {
+      "name": "production_deepseek_pair",
+      "triage_model": "deepseek/deepseek-v4-flash",
+      "summary_model": "deepseek/deepseek-v4-pro"
+    },
+    {
+      "name": "experimental_flash_only",
+      "triage_model": "deepseek/deepseek-v4-flash",
+      "summary_model": "deepseek/deepseek-v4-flash"
+    }
+  ],
+  "download_count": 20,
+  "judge_model": "deepseek/deepseek-v4-pro"
+}

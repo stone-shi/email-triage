@@ -62,6 +62,16 @@ def process_account_emails(
         # 3. Level 1 LLM Binary Triage
         is_important, reason, score = engine.run_level_1_classification(sender, subject, snippet)
         
+        # Ambiguity Escalation Layer
+        from config import settings
+        if score < settings.triage.confidence_threshold:
+            if human_mode:
+                logger.info("Low confidence score (%s) from fast triage model. Escalating email to premium model...", score)
+            full_id = email["id"]
+            full_body = client_source.fetch_full_body(full_id)
+            is_important, reason, score = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
+            reason = f"[Premium Escalated] {reason}"
+        
         if not is_important:
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str, 
@@ -71,7 +81,7 @@ def process_account_emails(
                 EmailNotifier.print_level_1_hit(msg_id, account, subject, reason, score)
             
             run_results.append({
-                "triage_level": "Level 1",
+                "triage_level": "Level 1 (Escalated)" if "[Premium Escalated]" in reason else "Level 1",
                 "message_id": msg_id,
                 "account": account,
                 "subject": subject,

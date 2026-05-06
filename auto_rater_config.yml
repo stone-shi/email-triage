@@ -5,7 +5,10 @@ test_configurations:
   - name: "experimental_flash_only"
     triage_model: "deepseek/deepseek-v4-flash"
     summary_model: "deepseek/deepseek-v4-flash"
+  - name: "baseline_gemini_pro"
+    triage_model: "gemini/gemini-3.1-pro-preview"
+    summary_model: "gemini/gemini-3.1-pro-preview"
 
 download_count: 100
 judge_model: "deepseek/deepseek-v4-pro"
-baseline_configuration_name: "production_deepseek_pair"
+baseline_configuration_name: "baseline_gemini_pro"

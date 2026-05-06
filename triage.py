@@ -31,7 +31,7 @@ class EmailTriageEngine:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-        self.http_client = httpx.Client(timeout=45.0)
+        self.http_client = httpx.Client(timeout=1800.0)
         
         try:
             self.encoder = tiktoken.get_encoding("cl100k_base")
@@ -64,6 +64,18 @@ class EmailTriageEngine:
                 
         return False, None
 
+    def _extract_json(self, text: str) -> str:
+        """
+        Extracts JSON content from text, stripping markdown code blocks if present.
+        """
+        text = text.strip()
+        if text.startswith("```"):
+            # Match ```json ... ``` or just ``` ... ```
+            match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        return text
+
     def run_level_1_classification(self, sender: str, subject: str, snippet: str) -> Tuple[bool, str, float]:
         """
         Level 1 Triage: LiteLLM / DeepSeek flash binary classification with JSON validation.
@@ -84,7 +96,6 @@ class EmailTriageEngine:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.0,
-            "response_format": {"type": "json_object"}
         }
         
         try:
@@ -92,7 +103,11 @@ class EmailTriageEngine:
             response = self.http_client.post(url, headers=self.headers, json=payload)
             response.raise_for_status()
             
-            resp_json = response.json()
+            try:
+                resp_json = response.json()
+            except json.JSONDecodeError as e:
+                logger.error("Level 1 Proxy response is not valid JSON. Status: %s, Body: %s", response.status_code, response.text)
+                raise e
             
             # Extract usage data from response if provided by proxy
             usage = resp_json.get("usage", {})
@@ -101,7 +116,16 @@ class EmailTriageEngine:
             
             # Parse inner completion content
             content = resp_json["choices"][0]["message"]["content"]
-            result_dict = json.loads(content)
+            if not content:
+                logger.error("Level 1 LLM returned empty content. Response: %s", resp_json)
+                raise ValueError("Empty content from LLM")
+
+            json_content = self._extract_json(content)
+            try:
+                result_dict = json.loads(json_content)
+            except json.JSONDecodeError as e:
+                logger.error("Level 1 failed to parse inner JSON content: %s", json_content)
+                raise e
             
             # Validate dictionary format via Pydantic
             result = TriageDecision.model_validate(result_dict)
@@ -133,7 +157,6 @@ class EmailTriageEngine:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2,
-            "response_format": {"type": "json_object"}
         }
         
         try:
@@ -141,14 +164,27 @@ class EmailTriageEngine:
             response = self.http_client.post(url, headers=self.headers, json=payload)
             response.raise_for_status()
             
-            resp_json = response.json()
+            try:
+                resp_json = response.json()
+            except json.JSONDecodeError as e:
+                logger.error("Level 2 Proxy response is not valid JSON. Status: %s, Body: %s", response.status_code, response.text)
+                raise e
             
             usage = resp_json.get("usage", {})
             tokens_used = usage.get("total_tokens", self._estimate_tokens(prompt) + 180)
             self.db.log_token_usage("level_2_summary", settings.summary_model, tokens_used)
             
             content = resp_json["choices"][0]["message"]["content"].strip()
-            result_dict = json.loads(content)
+            if not content:
+                logger.error("Level 2 LLM returned empty content. Response: %s", resp_json)
+                raise ValueError("Empty content from LLM")
+
+            json_content = self._extract_json(content)
+            try:
+                result_dict = json.loads(json_content)
+            except json.JSONDecodeError as e:
+                logger.error("Level 2 failed to parse inner JSON content: %s", json_content)
+                raise e
             
             result = SummaryResult.model_validate(result_dict)
             logger.info("Level 2 summary successfully generated for '%s' (Score: %s)", subject, result.confidence_score)

@@ -1,5 +1,6 @@
 import json
 import logging
+import argparse
 import yaml
 import sys
 import time
@@ -255,6 +256,18 @@ def main() -> None:
     if not configs:
         logger.error("No test configurations found in config file.")
         sys.exit(1)
+        
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Auto Rater Benchmarking Runner")
+    parser.add_argument("--run", type=str, help="Name of a single test configuration pair to execute specifically")
+    args = parser.parse_args()
+    
+    if args.run:
+        configs = [c for c in configs if c.get("name") == args.run]
+        if not configs:
+            logger.error("No test configuration found matching name: '%s'", args.run)
+            sys.exit(1)
+        logger.info("Targeted single configuration run: '%s'", args.run)
         
     logger.info("Loaded %d offline emails. Starting benchmarking configurations...", len(emails))
     

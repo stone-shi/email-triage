@@ -101,7 +101,7 @@ class GmailClient:
             logger.error("Gmail authentication failure: %s", e, exc_info=True)
             raise
 
-    def fetch_unread_messages(self, query: str = "is:unread newer_than:1d") -> List[Dict[str, Any]]:
+    def fetch_unread_messages(self, query: str = "is:unread") -> List[Dict[str, Any]]:
         """
         Fetches metadata for unread messages matching the query.
         Uses format='metadata' for token/bandwidth efficiency.

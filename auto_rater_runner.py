@@ -1,5 +1,6 @@
 import json
 import logging
+import yaml
 import sys
 import time
 from pathlib import Path
@@ -236,15 +237,15 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
 
 def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
-    config_path = workspace_dir / "auto_rater_config.json"
+    config_path = workspace_dir / "auto_rater_config.yml"
     emails_path = workspace_dir / "auto_rater_data" / "offline_emails.json"
     
     if not config_path.exists() or not emails_path.exists():
         logger.error("Required files missing. Make sure config and offline_emails.json exist.")
         sys.exit(1)
         
-    with open(config_path, "r") as f:
-        config_data = json.load(f)
+    with open(config_path, "r", encoding="utf-8") as f:
+        config_data = yaml.safe_load(f) or {}
         
     with open(emails_path, "r") as f:
         emails = json.load(f)

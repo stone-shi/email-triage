@@ -1,5 +1,6 @@
 import json
 import logging
+import yaml
 import sys
 import time
 from pathlib import Path
@@ -25,7 +26,7 @@ def extract_json(text: str) -> str:
 
 def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
-    config_path = workspace_dir / "auto_rater_config.json"
+    config_path = workspace_dir / "auto_rater_config.yml"
     data_dir = workspace_dir / "auto_rater_data"
     emails_path = data_dir / "offline_emails.json"
     result_files = list(data_dir.glob("auto_rater_results_*.json"))
@@ -34,8 +35,8 @@ def main() -> None:
         logger.error("Required testing files or configuration data are missing.")
         sys.exit(1)
         
-    with open(config_path, "r") as f:
-        config_data = json.load(f)
+    with open(config_path, "r", encoding="utf-8") as f:
+        config_data = yaml.safe_load(f) or {}
         
     with open(emails_path, "r") as f:
         emails_list = json.load(f)

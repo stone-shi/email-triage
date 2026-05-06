@@ -1,5 +1,6 @@
 import json
 import logging
+import yaml
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
@@ -15,7 +16,7 @@ logger = logging.getLogger("auto_rater_downloader")
 
 def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
-    config_path = workspace_dir / "auto_rater_config.json"
+    config_path = workspace_dir / "auto_rater_config.yml"
     output_dir = workspace_dir / "auto_rater_data"
     output_dir.mkdir(exist_ok=True)
     output_path = output_dir / "offline_emails.json"
@@ -24,8 +25,8 @@ def main() -> None:
         logger.error("Configuration file not found at %s", config_path)
         sys.exit(1)
         
-    with open(config_path, "r") as f:
-        config = json.load(f)
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
         
     count = config.get("download_count", 20)
     logger.info("Starting offline download of top %d emails from Gmail...", count)

@@ -10,8 +10,9 @@ This skill provides procedural knowledge for running the Email Triage & Summariz
 ## Execution Workflow
 
 The engine is designed to be run as a standalone script that emits a JSON array to `stdout`.
+All python code is under ./scripts/
 It use python venv. If venv/ folder doesn't exist, run `python3 -m venv venv` then install dependencies from requirement.txt
-
+Then you can use ./venv/bin/python3 main.py 
 
 ### Basic Usage
 

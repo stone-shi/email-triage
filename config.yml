@@ -18,6 +18,11 @@ triage:
     - "marketing"
     - "digest"
     - "advertisement"
+    - "^(Album|Movie|Episode) (Grabbed|Downloaded|Added|Deleted)$"
+    - "^(Ordered|Shipped|Delivered): .*"
+    - ".* updates$"
+    - "^New in .*: .*"
+    - "^You're Invited: .*"
   blacklist_senders:
     - "spammer@domain.com"
     - "offers@"

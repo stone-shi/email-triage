@@ -32,6 +32,19 @@ class EmailDB:
                         level_0_status TEXT, -- 'passed' or 'filtered'
                         level_1_status TEXT, -- 'important' or 'unimportant' or 'skipped'
                         level_2_summary TEXT,
+                        reason TEXT,
+                        score REAL,
+                        model_used_triage TEXT,
+                        model_used_summary TEXT,
+                        level_1_duration_sec REAL,
+                        level_2_duration_sec REAL,
+                        level_1_prompt_tokens INTEGER,
+                        level_1_completion_tokens INTEGER,
+                        level_2_prompt_tokens INTEGER,
+                        level_2_completion_tokens INTEGER,
+                        level_0_judge_correctness TEXT,
+                        level_0_judge_score REAL,
+                        level_0_judge_reason TEXT,
                         processed_at TEXT NOT NULL
                     )
                 """)
@@ -73,7 +86,20 @@ class EmailDB:
         date_str: str,
         level_0_status: str,
         level_1_status: str = "skipped",
-        level_2_summary: Optional[str] = None
+        level_2_summary: Optional[str] = None,
+        reason: Optional[str] = None,
+        score: Optional[float] = None,
+        model_used_triage: Optional[str] = None,
+        model_used_summary: Optional[str] = None,
+        level_1_duration_sec: Optional[float] = None,
+        level_2_duration_sec: Optional[float] = None,
+        level_1_prompt_tokens: Optional[int] = None,
+        level_1_completion_tokens: Optional[int] = None,
+        level_2_prompt_tokens: Optional[int] = None,
+        level_2_completion_tokens: Optional[int] = None,
+        level_0_judge_correctness: Optional[str] = None,
+        level_0_judge_score: Optional[float] = None,
+        level_0_judge_reason: Optional[str] = None
     ) -> None:
         """Save or update email triage results."""
         try:
@@ -82,9 +108,15 @@ class EmailDB:
                 processed_at = datetime.utcnow().isoformat()
                 cursor.execute("""
                     INSERT OR REPLACE INTO email_cache 
-                    (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, processed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, processed_at))
+                    (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, 
+                     reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec, 
+                     level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens, 
+                     level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, 
+                      reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec, 
+                      level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens, 
+                      level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at))
                 conn.commit()
             logger.debug("Saved triage results for Message-ID: %s", message_id)
         except Exception as e:

@@ -114,7 +114,8 @@ def process_account_emails(
         if not is_important:
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str, 
-                level_0_status="passed", level_1_status="unimportant"
+                level_0_status="passed", level_1_status="unimportant",
+                reason=reason, score=score, model_used_triage=settings.triage_model
             )
             if human_mode:
                 EmailNotifier.print_level_1_hit(msg_id, account, subject, reason, score)
@@ -141,7 +142,9 @@ def process_account_emails(
         
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
-            level_0_status="passed", level_1_status="important", level_2_summary=summary
+            level_0_status="passed", level_1_status="important", level_2_summary=summary,
+            reason=reason, score=summary_score, model_used_triage=settings.triage_model,
+            model_used_summary=settings.summary_model
         )
         
         # 5. Real-time Notification Alerts (Only printed if human mode requested)

@@ -58,6 +58,16 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         "Authorization": f"Bearer {settings.llm_api_key}"
     }
     
+    # Load external prompts if present
+    prompts_path = workspace_dir / "prompts.yml"
+    prompts = {}
+    try:
+        if prompts_path.exists():
+            with open(prompts_path, "r", encoding="utf-8") as f:
+                prompts = yaml.safe_load(f) or {}
+    except Exception:
+        pass
+    
     http_client = httpx.Client(timeout=1800.0)
     run_results: List[Dict[str, Any]] = []
     
@@ -115,13 +125,15 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             
             # Use judge_model to verify if the Level 0 filter was actually correct
             l0_audit_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
-            l0_audit_system = (
-                "You are an expert email auditor. Review the email metadata to determine if it is truly low priority noise "
-                "(e.g., automated notifications, transactional marketing, newsletters, spam) or if it was a false positive "
-                "that actually contains high priority business communication or a critical personal update.\n"
-                "You MUST return a valid JSON object containing exactly three fields: "
-                "'is_actually_low_priority' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
-            )
+            l0_audit_system = prompts.get("auto_rater_level_0_audit", {}).get("system")
+            if not l0_audit_system:
+                l0_audit_system = (
+                    "You are an expert email auditor. Review the email metadata to determine if it is truly low priority noise "
+                    "(e.g., automated notifications, transactional marketing, newsletters, spam) or if it was a false positive "
+                    "that actually contains high priority business communication or a critical personal update.\n"
+                    "You MUST return a valid JSON object containing exactly three fields: "
+                    "'is_actually_low_priority' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
+                )
             try:
                 l0_payload = {
                     "model": judge_model,
@@ -182,12 +194,14 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             metrics["level_1_duration_sec"] = time.time() - l1_start
         else:
             l1_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
-            l1_system = (
-                "You are an expert executive assistant. Filter out automated updates, social notifications, "
-                "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
-                "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly three fields: "
-                "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
-            )
+            l1_system = prompts.get("level_1_fast_triage", {}).get("system")
+            if not l1_system:
+                l1_system = (
+                    "You are an expert executive assistant. Filter out automated updates, social notifications, "
+                    "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
+                    "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly three fields: "
+                    "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
+                )
             try:
                 l1_payload = {
                     "model": triage_model,
@@ -232,10 +246,12 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 metrics["summary"] = "No substantive content to summarize."
             else:
                 l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
-                l2_system = (
-                    "Create clear, precise bulleted executive summaries. Be brief and highlight any requested task, conclusion, or deadline. "
-                    "You MUST return a valid JSON object containing exactly two fields: 'summary' (string) and 'confidence_score' (float from 0.0 to 1.0)."
-                )
+                l2_system = prompts.get("level_2_summarization", {}).get("system")
+                if not l2_system:
+                    l2_system = (
+                        "Create clear, precise bulleted executive summaries. Be brief and highlight any requested task, conclusion, or deadline. "
+                        "You MUST return a valid JSON object containing exactly two fields: 'summary' (string) and 'confidence_score' (float from 0.0 to 1.0)."
+                    )
                 
                 l2_start = time.time()
                 try:

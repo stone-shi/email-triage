@@ -51,6 +51,16 @@ def main() -> None:
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f) or {}
         
+    # Load external prompts if present
+    prompts_path = workspace_dir / "prompts.yml"
+    prompts = {}
+    try:
+        if prompts_path.exists():
+            with open(prompts_path, "r", encoding="utf-8") as f:
+                prompts = yaml.safe_load(f) or {}
+    except Exception:
+        pass
+        
     log_level = config_data.get("log_level", "INFO").upper()
     numeric_level = getattr(logging, log_level, logging.INFO)
     logging.getLogger().setLevel(numeric_level)
@@ -130,15 +140,17 @@ def main() -> None:
                         f"Original Email Body:\n{full_body_text[:4000]}\n\n"
                         f"Generated Summary under Test:\n{summary_text}\n"
                     )
-                    judge_system = (
-                        "You are a strict supervisor auditing executive assistant performance. Score the generated email summary "
-                        "on a 1-10 integer scale across three categories: "
-                        "1. 'accuracy' (factually true to the body), "
-                        "2. 'conciseness' (short, crisp, bulleted without fluff), "
-                        "3. 'actionability' (clearly surfaces tasks, key decisions, and deadlines).\n"
-                        "You MUST return a valid JSON object containing exactly four fields: "
-                        "'accuracy' (int), 'conciseness' (int), 'actionability' (int), and 'rationale' (string explaining the scores)."
-                    )
+                    judge_system = prompts.get("auto_rater_summarizer_judge", {}).get("system")
+                    if not judge_system:
+                        judge_system = (
+                            "You are a strict supervisor auditing executive assistant performance. Score the generated email summary "
+                            "on a 1-10 integer scale across three categories: "
+                            "1. 'accuracy' (factually true to the body), "
+                            "2. 'conciseness' (short, crisp, bulleted without fluff), "
+                            "3. 'actionability' (clearly surfaces tasks, key decisions, and deadlines).\n"
+                            "You MUST return a valid JSON object containing exactly four fields: "
+                            "'accuracy' (int), 'conciseness' (int), 'actionability' (int), and 'rationale' (string explaining the scores)."
+                        )
                     
                     payload = {
                         "model": judge_model,

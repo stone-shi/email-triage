@@ -33,6 +33,18 @@ class EmailTriageEngine:
         }
         self.http_client = httpx.Client(timeout=1800.0)
         
+        # Load external prompts if present
+        import yaml
+        prompts_path = settings.workspace_dir / "prompts.yml"
+        try:
+            if prompts_path.exists():
+                with open(prompts_path, "r", encoding="utf-8") as f:
+                    self.prompts = yaml.safe_load(f) or {}
+            else:
+                self.prompts = {}
+        except Exception:
+            self.prompts = {}
+            
         try:
             self.encoder = tiktoken.get_encoding("cl100k_base")
         except Exception:
@@ -108,12 +120,14 @@ class EmailTriageEngine:
             except Exception as tei_err:
                 logger.error("Level 1 TEI Classifier server prediction failed: %s. Falling back to safety True.", tei_err)
                 return True, f"TEI server prediction error: {tei_err}", 1.0
-        system_instruction = (
-            "You are an expert executive assistant. Filter out automated updates, social notifications, "
-            "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
-            "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly three fields: "
-            "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
-        )
+        system_instruction = self.prompts.get("level_1_fast_triage", {}).get("system")
+        if not system_instruction:
+            system_instruction = (
+                "You are an expert executive assistant. Filter out automated updates, social notifications, "
+                "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
+                "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly three fields: "
+                "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
+            )
         
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -175,10 +189,12 @@ class EmailTriageEngine:
             return "No substantive content to summarize.", 0.0
 
         prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
-        system_instruction = (
-            "Create clear, precise bulleted executive summaries. Be brief and highlight any requested task, conclusion, or deadline. "
-            "You MUST return a valid JSON object containing exactly two fields: 'summary' (string) and 'confidence_score' (float from 0.0 to 1.0)."
-        )
+        system_instruction = self.prompts.get("level_2_summarization", {}).get("system")
+        if not system_instruction:
+            system_instruction = (
+                "Create clear, precise bulleted executive summaries. Be brief and highlight any requested task, conclusion, or deadline. "
+                "You MUST return a valid JSON object containing exactly two fields: 'summary' (string) and 'confidence_score' (float from 0.0 to 1.0)."
+            )
         
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -234,13 +250,15 @@ class EmailTriageEngine:
         to re-evaluate borderline/ambiguous classification choices definitively.
         """
         prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}\nFull Body Content:\n{full_body[:6000]}"
-        system_instruction = (
-            "You are a premium AI operations auditor resolving an ambiguous email priority classification query. "
-            "Filter out automated noise, promotions, and notifications. Mark as important only actionable, high-priority human "
-            "conversations, business critical text streams, or direct requests requiring attention.\n"
-            "You MUST return a valid JSON object containing exactly three fields: "
-            "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
-        )
+        system_instruction = self.prompts.get("level_1_premium_escalation", {}).get("system")
+        if not system_instruction:
+            system_instruction = (
+                "You are a premium AI operations auditor resolving an ambiguous email priority classification query. "
+                "Filter out automated noise, promotions, and notifications. Mark as important only actionable, high-priority human "
+                "conversations, business critical text streams, or direct requests requiring attention.\n"
+                "You MUST return a valid JSON object containing exactly three fields: "
+                "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
+            )
         
         url = f"{self.base_url}/chat/completions"
         payload = {

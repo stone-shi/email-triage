@@ -112,6 +112,48 @@ def main() -> None:
             snippet = original_email["snippet"]
             full_body = original_email["full_body"]
             
+            # VIP Whitelist Override Layer -> Direct to Level 2
+            if engine.is_vip_sender(sender):
+                if current_level != "Level 2":
+                    logger.info("Email '%s' from VIP sender. Escalating to Level 2 directly...", subject)
+                    r["triage_level"] = "Level 2 (VIP)"
+                    r["reason"] = "VIP Sender Direct Escalation"
+                    
+                    l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
+                    l2_system = prompts.get("level_2_summarization", {}).get("system", "")
+                    
+                    try:
+                        l2_payload = {
+                            "model": summary_model,
+                            "messages": [
+                                {"role": "system", "content": l2_system},
+                                {"role": "user", "content": l2_prompt}
+                            ],
+                            "temperature": 0.2
+                        }
+                        resp_l2 = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
+                        resp_l2.raise_for_status()
+                        content_l2 = resp_l2.json()["choices"][0]["message"]["content"]
+                        result_dict_l2 = json.loads(extract_json(content_l2))
+                        
+                        r["summary"] = result_dict_l2.get("summary", "")
+                        r["score"] = result_dict_l2.get("confidence_score", 1.0)
+                        
+                        r.pop("level_0_judge_correctness", None)
+                        r.pop("level_0_judge_score", None)
+                        r.pop("level_0_judge_reason", None)
+                        
+                        modified_count += 1
+                        
+                        payload["results"] = results
+                        with open(res_file, "w", encoding="utf-8") as out_f:
+                            json.dump(payload, out_f, indent=2, ensure_ascii=False)
+                            
+                    except Exception as e:
+                        logger.error("Failed to generate Level 2 summary for VIP email %s: %s", msg_id, e)
+                        
+                continue
+            
             # Rerun Level 0 Static Filter
             is_noise, l0_reason = engine.run_level_0_static(sender, subject)
             

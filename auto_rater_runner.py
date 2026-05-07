@@ -27,7 +27,7 @@ def extract_json(text: str) -> str:
             return match.group(1).strip()
     return text
 
-def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False) -> None:
+def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False, max_items: int = None) -> None:
     config_name = config["name"]
     triage_model = config["triage_model"]
     summary_model = config["summary_model"]
@@ -78,7 +78,14 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     new_emails_duration = 0.0
     processed_any_new = False
     
+    l0_processed = 0
+    l1_processed = 0
+    l2_processed = 0
+    
     for idx, email in enumerate(emails, 1):
+        if max_items is not None and l0_processed >= max_items and l1_processed >= max_items and l2_processed >= max_items:
+            logger.info("Max items reached for all levels. Stopping processing.")
+            break
         sender = email["sender"]
         subject = email["subject"]
         snippet = email["snippet"]
@@ -119,6 +126,9 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         
         # VIP Whitelist Override Layer -> Direct to Level 2
         if engine.is_vip_sender(sender):
+            if max_items is not None and l2_processed >= max_items:
+                continue
+            l2_processed += 1
             logger.info("VIP hit: Sender '%s' is a whitelisted VIP. Bypassing Level 0 and Level 1 directly to Level 2!", sender)
             metrics["triage_level"] = "Level 2 (VIP)"
             metrics["reason"] = "VIP Sender Direct Escalation"
@@ -164,6 +174,9 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         # 1. Level 0 Static Filter
         is_noise, l0_reason = engine.run_level_0_static(sender, subject)
         if is_noise:
+            if max_items is not None and l0_processed >= max_items:
+                continue
+            l0_processed += 1
             metrics["triage_level"] = "Level 0"
             metrics["reason"] = l0_reason
             
@@ -208,6 +221,9 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             continue
             
         # 2. Level 1 LLM / TEI Ingestion Classification
+        if max_items is not None and l1_processed >= max_items:
+            continue
+        l1_processed += 1
         l1_is_important, reason, score, l1_metrics = engine.run_level_1_classification(sender, subject, snippet, model_name=triage_model)
         
         metrics["reason"] = reason
@@ -224,22 +240,27 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             
         # 3. Level 2 Premium Summary (only if Level 1 marked important)
         if l1_is_important:
-            metrics["triage_level"] = "Level 2"
-            if not full_body or len(full_body.strip()) < 10:
-                metrics["summary"] = "No substantive content to summarize."
+            if max_items is not None and l2_processed >= max_items:
+                # Skip L2 summary to save time, keep as Level 1
+                pass
             else:
-                summary, summary_score, l2_metrics = engine.run_level_2_summarization(subject, full_body, model_name=summary_model)
-                
-                # Check for endpoint failures
-                if "Failed to generate proxy summary due to error" in summary:
-                    logger.warning("Omitting email %s from results cache due to Level 2 summarization failure.", msg_id)
-                    continue
+                l2_processed += 1
+                metrics["triage_level"] = "Level 2"
+                if not full_body or len(full_body.strip()) < 10:
+                    metrics["summary"] = "No substantive content to summarize."
+                else:
+                    summary, summary_score, l2_metrics = engine.run_level_2_summarization(subject, full_body, model_name=summary_model)
                     
-                metrics["summary"] = summary
-                metrics["score"] = summary_score
-                metrics["level_2_duration_sec"] = l2_metrics["duration_sec"]
-                metrics["level_2_prompt_tokens"] = l2_metrics["prompt_tokens"]
-                metrics["level_2_completion_tokens"] = l2_metrics["completion_tokens"]
+                    # Check for endpoint failures
+                    if "Failed to generate proxy summary due to error" in summary:
+                        logger.warning("Omitting email %s from results cache due to Level 2 summarization failure.", msg_id)
+                        continue
+                        
+                    metrics["summary"] = summary
+                    metrics["score"] = summary_score
+                    metrics["level_2_duration_sec"] = l2_metrics["duration_sec"]
+                    metrics["level_2_prompt_tokens"] = l2_metrics["prompt_tokens"]
+                    metrics["level_2_completion_tokens"] = l2_metrics["completion_tokens"]
                 
         metrics["total_email_process_duration_sec"] = time.time() - email_start_time
         new_emails_duration += metrics["total_email_process_duration_sec"]
@@ -297,6 +318,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Auto Rater Benchmarking Runner")
     parser.add_argument("--run", type=str, help="Name of a single test configuration pair to execute specifically")
     parser.add_argument("-f", "--force", action="store_true", help="Force execution and overwrite existing benchmark results file")
+    parser.add_argument("--max-items", type=int, help="Maximum items to process per triage level tier (useful for fast testing)")
     args = parser.parse_args()
     
     if args.run:
@@ -328,7 +350,7 @@ def main() -> None:
                 logger.info("Force override active: Overwriting modified model pairs for configuration '%s'...", cfg_name)
         
         try:
-            run_config(cfg, emails, workspace_dir, judge_model, level_0_judge_model, force_rerun=args.force)
+            run_config(cfg, emails, workspace_dir, judge_model, level_0_judge_model, force_rerun=args.force, max_items=args.max_items)
         except Exception as e:
             logger.error("Configuration run failed for %s: %s", cfg_name, e)
             continue

@@ -50,7 +50,7 @@ def print_level_2(results: List[Dict[str, Any]]) -> None:
             print(f"    (No summary generated)")
         print(border)
 
-def inspect_file(file_path: Path, level_filter: str = None) -> None:
+def inspect_file(file_path: Path, level_filter: str = None, wrong_only: bool = False) -> None:
     if not file_path.exists():
         print(f"Error: File not found at {file_path}")
         return
@@ -68,6 +68,9 @@ def inspect_file(file_path: Path, level_filter: str = None) -> None:
     print("#" * 80)
     
     l0_list = [r for r in results if r.get("triage_level") == "Level 0"]
+    if wrong_only:
+        l0_list = [r for r in l0_list if r.get("level_0_judge_correctness") == "False Positive"]
+        
     l1_list = [r for r in results if r.get("triage_level") == "Level 1" or r.get("triage_level") == "Level 1 (Escalated)"]
     l2_list = [r for r in results if r.get("triage_level") == "Level 2"]
     
@@ -82,6 +85,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Auto Rater Human Inspection Interface Utility")
     parser.add_argument("--file", type=str, help="Specific target auto_rater_results_*.json file name inside data directory to inspect")
     parser.add_argument("--level", type=str, choices=["0", "1", "2"], help="Filter display to show only a single triage level tier group (0, 1, or 2)")
+    parser.add_argument("--wrong-only", action="store_true", help="Display only Level 0 emails where the judge determined the static filter was a False Positive")
     args = parser.parse_args()
     
     workspace_dir = Path(__file__).parent.resolve()
@@ -89,7 +93,7 @@ def main() -> None:
     
     if args.file:
         target_path = data_dir / args.file
-        inspect_file(target_path, level_filter=args.level)
+        inspect_file(target_path, level_filter=args.level, wrong_only=args.wrong_only)
     else:
         # List available results JSON files for easy user selection menu
         result_files = list(data_dir.glob("auto_rater_results_*.json"))

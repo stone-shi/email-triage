@@ -7,7 +7,7 @@ Emails caught by the noise blacklist (senders or subjects).
 
 ```json
 {
-  "triage_level": "Level 0",
+  "triage_level": 0,
   "message_id": "string",
   "account": "string (gmail|imap)",
   "subject": "string",
@@ -20,7 +20,7 @@ Emails deemed "unimportant" by the triage model.
 
 ```json
 {
-  "triage_level": "Level 1",
+  "triage_level": 1,
   "message_id": "string",
   "account": "string",
   "subject": "string",
@@ -34,7 +34,7 @@ Important emails that have been summarized.
 
 ```json
 {
-  "triage_level": "Level 2",
+  "triage_level": 2,
   "message_id": "string",
   "account": "string",
   "sender": "string",

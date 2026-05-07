@@ -101,7 +101,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         
         # Initialize default metrics record matching user requirements
         metrics = {
-            "triage_level": "Level 0",
+            "triage_level": 0,
             "message_id": msg_id,
             "account": email["account"],
             "sender": sender,
@@ -130,7 +130,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 continue
             l2_processed += 1
             logger.info("VIP hit: Sender '%s' is a whitelisted VIP. Bypassing Level 0 and Level 1 directly to Level 2!", sender)
-            metrics["triage_level"] = "Level 2 (VIP)"
+            metrics["triage_level"] = 2
             metrics["reason"] = "VIP Sender Direct Escalation"
             
             if not full_body or len(full_body.strip()) < 10:
@@ -177,7 +177,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             if max_items is not None and l0_processed >= max_items:
                 continue
             l0_processed += 1
-            metrics["triage_level"] = "Level 0"
+            metrics["triage_level"] = 0
             metrics["reason"] = l0_reason
             
             # Use judge_model to verify if the Level 0 filter was actually correct
@@ -228,7 +228,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         
         metrics["reason"] = reason
         metrics["score"] = score
-        metrics["triage_level"] = "Level 1"
+        metrics["triage_level"] = 1
         metrics["level_1_duration_sec"] = l1_metrics["duration_sec"]
         metrics["level_1_prompt_tokens"] = l1_metrics["prompt_tokens"]
         metrics["level_1_completion_tokens"] = l1_metrics["completion_tokens"]
@@ -245,7 +245,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 pass
             else:
                 l2_processed += 1
-                metrics["triage_level"] = "Level 2"
+                metrics["triage_level"] = 2
                 if not full_body or len(full_body.strip()) < 10:
                     metrics["summary"] = "No substantive content to summarize."
                 else:

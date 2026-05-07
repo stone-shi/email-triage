@@ -54,7 +54,7 @@ class EmailNotifier:
     def print_json_payload(email_data: Dict[str, Any]) -> None:
         """Outputs parseable JSON payload string block demarcated by tags."""
         payload = {
-            "triage_level": "Level 2",
+            "triage_level": 2,
             "message_id": email_data.get("message_id"),
             "account": email_data.get("account"),
             "sender": email_data.get("sender"),

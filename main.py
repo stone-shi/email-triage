@@ -51,11 +51,12 @@ def process_account_emails(
             
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str,
-                level_0_status="passed", level_1_status="important", level_2_summary=summary
+                level_0_status="passed", level_1_status="important", level_2_summary=summary,
+                triage_level=2
             )
             
             run_results.append({
-                "triage_level": "Level 2 (VIP)",
+                "triage_level": 2,
                 "message_id": msg_id,
                 "account": account,
                 "sender": sender,
@@ -75,12 +76,12 @@ def process_account_emails(
         # 2. Level 0 Static Regex Filter
         is_noise, l0_reason = engine.run_level_0_static(sender, subject)
         if is_noise:
-            db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="filtered")
+            db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="filtered", triage_level=0)
             if human_mode:
                 EmailNotifier.print_level_0_hit(msg_id, account, subject, l0_reason)
             
             run_results.append({
-                "triage_level": "Level 0",
+                "triage_level": 0,
                 "message_id": msg_id,
                 "account": account,
                 "subject": subject,
@@ -111,13 +112,14 @@ def process_account_emails(
                 reason=reason, score=score, model_used_triage=settings.triage_model,
                 level_1_duration_sec=l1_metrics["duration_sec"],
                 level_1_prompt_tokens=l1_metrics["prompt_tokens"],
-                level_1_completion_tokens=l1_metrics["completion_tokens"]
+                level_1_completion_tokens=l1_metrics["completion_tokens"],
+                triage_level=1
             )
             if human_mode:
                 EmailNotifier.print_level_1_hit(msg_id, account, subject, reason, score)
             
             run_results.append({
-                "triage_level": "Level 1 (Escalated)" if "[Premium Escalated]" in reason else "Level 1",
+                "triage_level": 1,
                 "message_id": msg_id,
                 "account": account,
                 "subject": subject,
@@ -146,7 +148,8 @@ def process_account_emails(
             level_1_completion_tokens=l1_metrics["completion_tokens"],
             level_2_duration_sec=l2_metrics["duration_sec"],
             level_2_prompt_tokens=l2_metrics["prompt_tokens"],
-            level_2_completion_tokens=l2_metrics["completion_tokens"]
+            level_2_completion_tokens=l2_metrics["completion_tokens"],
+            triage_level=2
         )
         
         # 5. Real-time Notification Alerts (Only printed if human mode requested)
@@ -154,7 +157,7 @@ def process_account_emails(
             EmailNotifier.print_terminal_banner(subject, sender, reason, summary, summary_score)
         
         run_results.append({
-            "triage_level": "Level 2",
+            "triage_level": 2,
             "message_id": msg_id,
             "account": account,
             "sender": sender,

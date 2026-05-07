@@ -67,12 +67,12 @@ def inspect_file(file_path: Path, level_filter: str = None, wrong_only: bool = F
     print(f"   Total Process Latency: {payload.get('total_processing_all_emails_duration_sec', 0.0):.2f}s")
     print("#" * 80)
     
-    l0_list = [r for r in results if r.get("triage_level") == "Level 0"]
+    l0_list = [r for r in results if r.get("triage_level") == 0]
     if wrong_only:
         l0_list = [r for r in l0_list if r.get("level_0_judge_correctness") == "False Positive"]
         
-    l1_list = [r for r in results if r.get("triage_level") == "Level 1" or r.get("triage_level") == "Level 1 (Escalated)"]
-    l2_list = [r for r in results if r.get("triage_level") == "Level 2"]
+    l1_list = [r for r in results if r.get("triage_level") == 1]
+    l2_list = [r for r in results if r.get("triage_level") == 2]
     
     if level_filter is None or level_filter == "0":
         print_level_0(l0_list)

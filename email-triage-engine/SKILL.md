@@ -41,7 +41,7 @@ For a detailed breakdown of the JSON schema for each level, see [references/outp
 ## Common Tasks
 
 ### 1. Daily Summary
-Run `email-triage.sh` and filter the results for `triage_level == "Level 2"` to generate a report of important items.
+Run `email-triage.sh` and filter the results for `triage_level == 2` to generate a report of important items.
 
 ### 2. Re-authentication
 If Gmail ingestion fails with auth errors, instruct the user to run:

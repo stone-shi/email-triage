@@ -100,7 +100,7 @@ def main() -> None:
             msg_id = r["message_id"]
             current_level = r["triage_level"]
             
-            if current_level not in ["Level 0", "Level 1"]:
+            if current_level not in [0, 1, "Level 0", "Level 1"]:
                 continue
                 
             original_email = emails_by_id.get(msg_id)
@@ -114,9 +114,9 @@ def main() -> None:
             
             # VIP Whitelist Override Layer -> Direct to Level 2
             if engine.is_vip_sender(sender):
-                if current_level != "Level 2":
+                if current_level != 2 and current_level != "Level 2":
                     logger.info("Email '%s' from VIP sender. Escalating to Level 2 directly...", subject)
-                    r["triage_level"] = "Level 2 (VIP)"
+                    r["triage_level"] = 2
                     r["reason"] = "VIP Sender Direct Escalation"
                     
                     l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
@@ -162,9 +162,9 @@ def main() -> None:
                 new_level = "Level 0"
                 
             # Case A: Shifted from Level 1 to Level 0 (New regex caught it)
-            if current_level == "Level 1" and new_level == "Level 0":
+            if (current_level == 1 or current_level == "Level 1") and new_level == "Level 0":
                 logger.info("Email '%s' shifted L1 -> L0. Regenerating judge audit...", subject)
-                r["triage_level"] = "Level 0"
+                r["triage_level"] = 0
                 r["reason"] = l0_reason
                 
                 # Call smaller judge to audit Level 0
@@ -193,7 +193,7 @@ def main() -> None:
                 modified_count += 1
                 
             # Case B: Shifted from Level 0 to Level 1 or 2 (Removed regex allowed it)
-            elif current_level == "Level 0" and new_level == "Level 1":
+            elif (current_level == 0 or current_level == "Level 0") and new_level == "Level 1":
                 logger.info("Email '%s' shifted L0 -> L1. Running model triage...", subject)
                 
                 # Run Level 1 LLM Classification
@@ -217,7 +217,7 @@ def main() -> None:
                     l1_is_important = result_dict.get("is_important", True)
                     r["reason"] = result_dict.get("reason", "No reason provided")
                     r["score"] = result_dict.get("confidence_score", 1.0)
-                    r["triage_level"] = "Level 1"
+                    r["triage_level"] = 1
                     
                     # Clean Level 0 judge leftovers if present
                     r.pop("level_0_judge_correctness", None)
@@ -227,7 +227,7 @@ def main() -> None:
                     # If important, run Level 2 Summarization
                     if l1_is_important and len(full_body.strip()) > 10:
                         logger.info("Email '%s' marked important. Generating summary...", subject)
-                        r["triage_level"] = "Level 2"
+                        r["triage_level"] = 2
                         
                         l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
                         l2_system = prompts.get("level_2_summarization", {}).get("system", "")

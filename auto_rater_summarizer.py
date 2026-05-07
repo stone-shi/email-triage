@@ -112,7 +112,7 @@ def main() -> None:
         total_acc, total_con, total_act, scored_count = 0, 0, 0, 0
         
         for r in results:
-            if r["triage_level"] != "Level 2" or not r.get("summary"):
+            if r["triage_level"] != 2 or not r.get("summary"):
                 continue
                 
             msg_id = r["message_id"]

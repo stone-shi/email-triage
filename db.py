@@ -45,9 +45,14 @@ class EmailDB:
                         level_0_judge_correctness TEXT,
                         level_0_judge_score REAL,
                         level_0_judge_reason TEXT,
-                        processed_at TEXT NOT NULL
+                        processed_at TEXT NOT NULL,
+                        triage_level INTEGER
                     )
                 """)
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN triage_level INTEGER")
+                except Exception:
+                    pass
                 # Create basic metrics/tokens log table
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS token_logs (
@@ -99,7 +104,8 @@ class EmailDB:
         level_2_completion_tokens: Optional[int] = None,
         level_0_judge_correctness: Optional[str] = None,
         level_0_judge_score: Optional[float] = None,
-        level_0_judge_reason: Optional[str] = None
+        level_0_judge_reason: Optional[str] = None,
+        triage_level: Optional[int] = None
     ) -> None:
         """Save or update email triage results."""
         try:
@@ -111,12 +117,12 @@ class EmailDB:
                     (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, 
                      reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec, 
                      level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens, 
-                     level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at, triage_level)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, 
                       reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec, 
                       level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens, 
-                      level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at))
+                      level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at, triage_level))
                 conn.commit()
             logger.debug("Saved triage results for Message-ID: %s", message_id)
         except Exception as e:

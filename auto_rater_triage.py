@@ -44,9 +44,9 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
     
     for name, data in configs_data.items():
         total = len(data["results"])
-        l0_filtered = sum(1 for r in data["results"] if r["triage_level"].startswith("Level 0"))
-        l1_unimportant = sum(1 for r in data["results"] if r["triage_level"].startswith("Level 1"))
-        important = sum(1 for r in data["results"] if r["triage_level"].startswith("Level 2"))
+        l0_filtered = sum(1 for r in data["results"] if r["triage_level"] == 0)
+        l1_unimportant = sum(1 for r in data["results"] if r["triage_level"] == 1)
+        important = sum(1 for r in data["results"] if r["triage_level"] == 2)
         
         report_lines.append(f"### 🔍 Configuration: `{name}`")
         report_lines.append(f"- **Total Scanned Envelopes**: {total}")
@@ -58,7 +58,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
     # Benchmark Alignment Analysis using the gold baseline configuration if present
     if baseline_name in configs_data and len(configs_data) > 1:
         report_lines.append("## 📉 Benchmark Alignment Analytics (Relative to Baseline)")
-        baseline_results = {r["message_id"]: (r["triage_level"].startswith("Level 2")) for r in configs_data[baseline_name]["results"] if not r["triage_level"].startswith("Level 0")}
+        baseline_results = {r["message_id"]: (r["triage_level"] == 2) for r in configs_data[baseline_name]["results"] if r["triage_level"] != 0}
         
         for name, data in configs_data.items():
             if name == baseline_name:
@@ -66,14 +66,14 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
             
             tp, fp, fn, tn = 0, 0, 0, 0
             for r in data["results"]:
-                if r["triage_level"].startswith("Level 0"):
+                if r["triage_level"] == 0:
                     continue
                 msg_id = r["message_id"]
                 if msg_id not in baseline_results:
                     continue
                     
                 actual_important = baseline_results[msg_id]
-                pred_important = (r["triage_level"].startswith("Level 2"))
+                pred_important = (r["triage_level"] == 2)
                 
                 if actual_important and pred_important:
                     tp += 1

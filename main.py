@@ -92,7 +92,7 @@ def process_account_emails(
         db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="passed")
 
         # 3. Level 1 LLM Binary Triage
-        is_important, reason, score = engine.run_level_1_classification(sender, subject, snippet)
+        is_important, reason, score, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
         
         # Ambiguity Escalation Layer
         from config import settings
@@ -108,7 +108,10 @@ def process_account_emails(
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str, 
                 level_0_status="passed", level_1_status="unimportant",
-                reason=reason, score=score, model_used_triage=settings.triage_model
+                reason=reason, score=score, model_used_triage=settings.triage_model,
+                level_1_duration_sec=l1_metrics["duration_sec"],
+                level_1_prompt_tokens=l1_metrics["prompt_tokens"],
+                level_1_completion_tokens=l1_metrics["completion_tokens"]
             )
             if human_mode:
                 EmailNotifier.print_level_1_hit(msg_id, account, subject, reason, score)
@@ -131,13 +134,19 @@ def process_account_emails(
         full_id = email["id"]
         full_body = client_source.fetch_full_body(full_id)
         
-        summary, summary_score = engine.run_level_2_summarization(subject, full_body)
+        summary, summary_score, l2_metrics = engine.run_level_2_summarization(subject, full_body)
         
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
             level_0_status="passed", level_1_status="important", level_2_summary=summary,
             reason=reason, score=summary_score, model_used_triage=settings.triage_model,
-            model_used_summary=settings.summary_model
+            model_used_summary=settings.summary_model,
+            level_1_duration_sec=l1_metrics["duration_sec"],
+            level_1_prompt_tokens=l1_metrics["prompt_tokens"],
+            level_1_completion_tokens=l1_metrics["completion_tokens"],
+            level_2_duration_sec=l2_metrics["duration_sec"],
+            level_2_prompt_tokens=l2_metrics["prompt_tokens"],
+            level_2_completion_tokens=l2_metrics["completion_tokens"]
         )
         
         # 5. Real-time Notification Alerts (Only printed if human mode requested)

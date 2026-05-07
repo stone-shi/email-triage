@@ -1,7 +1,7 @@
 import logging
 import re
 import json
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 from pydantic import BaseModel, Field
 import httpx
 import tiktoken
@@ -100,11 +100,23 @@ class EmailTriageEngine:
                 return match.group(1).strip()
         return text
 
-    def run_level_1_classification(self, sender: str, subject: str, snippet: str) -> Tuple[bool, str, float]:
+    def run_level_1_classification(self, sender: str, subject: str, snippet: str, model_name: Optional[str] = None) -> Tuple[bool, str, float, Dict[str, Any]]:
         """
         Level 1 Triage: LiteLLM / DeepSeek flash binary classification with JSON validation.
+        Returns (is_important, reason, score, metrics).
         """
+        if not model_name:
+            model_name = settings.triage_model
+            
         prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
+        
+        metrics = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "duration_sec": 0.0
+        }
+        
+        start_time = time.time()
         
         # TEI Classifier Ingestion Pathway Switch
         if getattr(settings.triage, "triage_type", "llm") == "tei":
@@ -123,10 +135,13 @@ class EmailTriageEngine:
                 reason = f"TEI Classifier resolved winning label: '{winning_label}'"
                 
                 logger.info("Level 1 TEI Classifier result for '%s': Important=%s (Score: %s)", subject, is_important, winning_score)
-                return is_important, reason, winning_score
+                metrics["duration_sec"] = time.time() - start_time
+                return is_important, reason, winning_score, metrics
             except Exception as tei_err:
                 logger.error("Level 1 TEI Classifier server prediction failed: %s. Falling back to safety True.", tei_err)
-                return True, f"TEI server prediction error: {tei_err}", 1.0
+                metrics["duration_sec"] = time.time() - start_time
+                return True, f"TEI server prediction error: {tei_err}", 1.0, metrics
+                
         system_instruction = self.prompts.get("level_1_fast_triage", {}).get("system")
         if not system_instruction:
             system_instruction = (
@@ -138,7 +153,7 @@ class EmailTriageEngine:
         
         url = f"{self.base_url}/chat/completions"
         payload = {
-            "model": settings.triage_model,
+            "model": model_name,
             "messages": [
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": prompt}
@@ -147,7 +162,7 @@ class EmailTriageEngine:
         }
         
         try:
-            logger.info("Level 1 Triage request sent to custom LiteLLM proxy model: %s", settings.triage_model)
+            logger.info("Level 1 Triage request sent to custom LiteLLM proxy model: %s", model_name)
             response = self.http_client.post(url, headers=self.headers, json=payload)
             response.raise_for_status()
             
@@ -159,8 +174,11 @@ class EmailTriageEngine:
             
             # Extract usage data from response if provided by proxy
             usage = resp_json.get("usage", {})
+            metrics["prompt_tokens"] = usage.get("prompt_tokens", 0)
+            metrics["completion_tokens"] = usage.get("completion_tokens", 0)
+            
             tokens_used = usage.get("total_tokens", self._estimate_tokens(prompt) + 40)
-            self.db.log_token_usage("level_1_classification", settings.triage_model, tokens_used)
+            self.db.log_token_usage("level_1_classification", model_name, tokens_used)
             
             # Parse inner completion content
             content = resp_json["choices"][0]["message"]["content"]
@@ -178,7 +196,9 @@ class EmailTriageEngine:
             # Validate dictionary format via Pydantic
             result = TriageDecision.model_validate(result_dict)
             logger.info("Level 1 LiteLLM result for '%s': Important=%s (Reason: %s, Score: %s)", subject, result.is_important, result.reason, result.confidence_score)
-            return result.is_important, result.reason, result.confidence_score
+            
+            metrics["duration_sec"] = time.time() - start_time
+            return result.is_important, result.reason, result.confidence_score, metrics
             
         except Exception as e:
             logger.error("Level 1 LiteLLM proxy classification failed: %s. Defaulting to True for safety.", e)
@@ -186,14 +206,26 @@ class EmailTriageEngine:
                 logger.error("Raw unparsed Level 1 response text was: \n%s", content)
             elif 'response' in locals():
                 logger.error("Raw proxy server response status body text was: \n%s", response.text)
-            return True, f"Proxy error: {e}", 1.0
+                
+            metrics["duration_sec"] = time.time() - start_time
+            return True, f"Proxy error: {e}", 1.0, metrics
 
-    def run_level_2_summarization(self, subject: str, full_body: str) -> Tuple[str, float]:
+    def run_level_2_summarization(self, subject: str, full_body: str, model_name: Optional[str] = None) -> Tuple[str, float, Dict[str, Any]]:
         """
         Level 2 Summarization: DeepSeek pro high-quality bulleted executive summaries.
+        Returns (summary, score, metrics).
         """
+        if not model_name:
+            model_name = settings.summary_model
+            
+        metrics = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "duration_sec": 0.0
+        }
+        
         if not full_body or len(full_body.strip()) < 10:
-            return "No substantive content to summarize.", 0.0
+            return "No substantive content to summarize.", 0.0, metrics
 
         prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
         system_instruction = self.prompts.get("level_2_summarization", {}).get("system")
@@ -205,7 +237,7 @@ class EmailTriageEngine:
         
         url = f"{self.base_url}/chat/completions"
         payload = {
-            "model": settings.summary_model,
+            "model": model_name,
             "messages": [
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": prompt}
@@ -213,8 +245,9 @@ class EmailTriageEngine:
             "temperature": 0.2,
         }
         
+        start_time = time.time()
         try:
-            logger.info("Level 2 Triage summary request sent to custom LiteLLM proxy model: %s", settings.summary_model)
+            logger.info("Level 2 Triage summary request sent to custom LiteLLM proxy model: %s", model_name)
             response = self.http_client.post(url, headers=self.headers, json=payload)
             response.raise_for_status()
             
@@ -225,8 +258,11 @@ class EmailTriageEngine:
                 raise e
             
             usage = resp_json.get("usage", {})
+            metrics["prompt_tokens"] = usage.get("prompt_tokens", 0)
+            metrics["completion_tokens"] = usage.get("completion_tokens", 0)
+            
             tokens_used = usage.get("total_tokens", self._estimate_tokens(prompt) + 180)
-            self.db.log_token_usage("level_2_summary", settings.summary_model, tokens_used)
+            self.db.log_token_usage("level_2_summary", model_name, tokens_used)
             
             content = resp_json["choices"][0]["message"]["content"].strip()
             if not content:
@@ -242,14 +278,18 @@ class EmailTriageEngine:
             
             result = SummaryResult.model_validate(result_dict)
             logger.info("Level 2 summary successfully generated for '%s' (Score: %s)", subject, result.confidence_score)
-            return result.summary, result.confidence_score
+            
+            metrics["duration_sec"] = time.time() - start_time
+            return result.summary, result.confidence_score, metrics
         except Exception as e:
             logger.error("Level 2 LiteLLM summarization failed: %s", e)
             if 'content' in locals():
                 logger.error("Raw unparsed Level 2 response text was: \n%s", content)
             elif 'response' in locals():
                 logger.error("Raw proxy server response body text was: \n%s", response.text)
-            return f"Failed to generate proxy summary due to error: {e}", 1.0
+                
+            metrics["duration_sec"] = time.time() - start_time
+            return f"Failed to generate proxy summary due to error: {e}", 1.0, metrics
 
     def run_level_1_premium_escalation(self, sender: str, subject: str, snippet: str, full_body: str) -> Tuple[bool, str, float]:
         """

@@ -207,135 +207,40 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             run_results.append(metrics)
             continue
             
-        has_error = False
-            
         # 2. Level 1 LLM / TEI Ingestion Classification
-        l1_start = time.time()
-        l1_is_important = True
+        l1_is_important, reason, score, l1_metrics = engine.run_level_1_classification(sender, subject, snippet, model_name=triage_model)
         
-        triage_type = config.get("triage_type", "llm")
-        if triage_type == "tei":
-            tei_url = config.get("tei_url", "http://10.100.0.50:8077/predict")
-            tei_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
-            try:
-                resp = http_client.post(tei_url, json={"inputs": tei_text})
-                resp.raise_for_status()
-                predictions = resp.json()
-                
-                winning_pred = max(predictions, key=lambda x: x.get("score", 0.0))
-                winning_label = winning_pred.get("label", "").lower()
-                winning_score = winning_pred.get("score", 1.0)
-                
-                l1_is_important = ("entailment" in winning_label and "not_" not in winning_label) or "important" in winning_label
-                metrics["reason"] = f"[TEI] winning label: '{winning_label}'"
-                metrics["score"] = winning_score
-                metrics["triage_level"] = "Level 1"
-            except Exception as e:
-                logger.error("Level 1 TEI failed for email %s: %s", msg_id, e)
-                metrics["reason"] = f"Level 1 TEI failure: {str(e)}"
-                has_error = True
-                l1_is_important = True
-            metrics["level_1_duration_sec"] = time.time() - l1_start
-        else:
-            l1_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
-            l1_system = prompts.get("level_1_fast_triage", {}).get("system")
-            if not l1_system:
-                l1_system = (
-                    "You are an expert executive assistant. Filter out automated updates, social notifications, "
-                    "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
-                    "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly three fields: "
-                    "'is_important' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
-                )
-            try:
-                l1_payload = {
-                    "model": triage_model,
-                    "messages": [
-                        {"role": "system", "content": l1_system},
-                        {"role": "user", "content": l1_prompt}
-                    ],
-                    "temperature": 0.0
-                }
-                resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l1_payload)
-                resp.raise_for_status()
-                resp_json = resp.json()
-                
-                usage = resp_json.get("usage", {})
-                metrics["level_1_prompt_tokens"] = usage.get("prompt_tokens", 0)
-                metrics["level_1_completion_tokens"] = usage.get("completion_tokens", 0)
-                
-                content = resp_json["choices"][0]["message"]["content"]
-                result_dict = json.loads(extract_json(content))
-                
-                l1_is_important = result_dict.get("is_important", True)
-                metrics["reason"] = result_dict.get("reason", "No reason provided")
-                metrics["score"] = result_dict.get("confidence_score", 1.0)
-                metrics["triage_level"] = "Level 1"
-                
-            except Exception as e:
-                logger.error("Level 1 failed for email %s: %s", msg_id, e)
-                if 'content' in locals():
-                    logger.error("Raw unparsed Level 1 response text was: \n%s", content)
-                elif 'resp' in locals():
-                    logger.error("Raw server response text was: \n%s", resp.text)
-                metrics["reason"] = f"Level 1 failure: {str(e)}"
-                has_error = True
-                l1_is_important = True # Escalate on error for safety
-                
-            metrics["level_1_duration_sec"] = time.time() - l1_start
+        metrics["reason"] = reason
+        metrics["score"] = score
+        metrics["triage_level"] = "Level 1"
+        metrics["level_1_duration_sec"] = l1_metrics["duration_sec"]
+        metrics["level_1_prompt_tokens"] = l1_metrics["prompt_tokens"]
+        metrics["level_1_completion_tokens"] = l1_metrics["completion_tokens"]
         
+        # Check for endpoint failures to support resume capability
+        if "Proxy error:" in reason or "TEI server prediction error:" in reason:
+            logger.warning("Omitting email %s from results cache due to runtime LLM endpoint error.", msg_id)
+            continue
+            
         # 3. Level 2 Premium Summary (only if Level 1 marked important)
         if l1_is_important:
             metrics["triage_level"] = "Level 2"
             if not full_body or len(full_body.strip()) < 10:
                 metrics["summary"] = "No substantive content to summarize."
             else:
-                l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
-                l2_system = prompts.get("level_2_summarization", {}).get("system")
-                if not l2_system:
-                    l2_system = (
-                        "Create clear, precise bulleted executive summaries. Be brief and highlight any requested task, conclusion, or deadline. "
-                        "You MUST return a valid JSON object containing exactly two fields: 'summary' (string) and 'confidence_score' (float from 0.0 to 1.0)."
-                    )
+                summary, summary_score, l2_metrics = engine.run_level_2_summarization(subject, full_body, model_name=summary_model)
                 
-                l2_start = time.time()
-                try:
-                    l2_payload = {
-                        "model": summary_model,
-                        "messages": [
-                            {"role": "system", "content": l2_system},
-                            {"role": "user", "content": l2_prompt}
-                        ],
-                        "temperature": 0.2
-                    }
-                    resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
-                    resp.raise_for_status()
-                    resp_json = resp.json()
+                # Check for endpoint failures
+                if "Failed to generate proxy summary due to error" in summary:
+                    logger.warning("Omitting email %s from results cache due to Level 2 summarization failure.", msg_id)
+                    continue
                     
-                    usage = resp_json.get("usage", {})
-                    metrics["level_2_prompt_tokens"] = usage.get("prompt_tokens", 0)
-                    metrics["level_2_completion_tokens"] = usage.get("completion_tokens", 0)
-                    
-                    content = resp_json["choices"][0]["message"]["content"]
-                    result_dict = json.loads(extract_json(content))
-                    
-                    metrics["summary"] = result_dict.get("summary", "")
-                    metrics["score"] = result_dict.get("confidence_score", 1.0)
-                    
-                except Exception as e:
-                    logger.error("Level 2 failed for email %s: %s", msg_id, e)
-                    if 'content' in locals():
-                        logger.error("Raw unparsed Level 2 response text was: \n%s", content)
-                    elif 'resp' in locals():
-                        logger.error("Raw server response text was: \n%s", resp.text)
-                    metrics["summary"] = f"Level 2 summarization error: {str(e)}"
-                    has_error = True
-                    
-                metrics["level_2_duration_sec"] = time.time() - l2_start
+                metrics["summary"] = summary
+                metrics["score"] = summary_score
+                metrics["level_2_duration_sec"] = l2_metrics["duration_sec"]
+                metrics["level_2_prompt_tokens"] = l2_metrics["prompt_tokens"]
+                metrics["level_2_completion_tokens"] = l2_metrics["completion_tokens"]
                 
-        if has_error:
-            logger.warning("Omitting email %s from results cache due to runtime LLM endpoint error.", msg_id)
-            continue
-            
         metrics["total_email_process_duration_sec"] = time.time() - email_start_time
         new_emails_duration += metrics["total_email_process_duration_sec"]
         processed_any_new = True

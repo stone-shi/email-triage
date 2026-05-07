@@ -6,7 +6,7 @@
   "total_emails_processed": 229,
   "results": [
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfdd5dd9f57281",
       "account": "your_email@gmail.com",
       "sender": "lidarr_noreply@shifamily.com",
@@ -29,7 +29,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfdccf725b0ad7",
       "account": "your_email@gmail.com",
       "sender": "lidarr_noreply@shifamily.com",
@@ -52,7 +52,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfdc7a69c2de5a",
       "account": "your_email@gmail.com",
       "sender": "lidarr_noreply@shifamily.com",
@@ -75,7 +75,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<f18ec9fc760e1b4a9fe08a23b.31fe2188f5.20260506144510.57a7aa004c.e6af9564@mail60.atl301.rsgsv.net>",
       "account": "your_email@gmail.com",
       "sender": "Crab Dynasty <sales@crabdynasty.com>",
@@ -98,7 +98,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "19dfda9e6bf1f9c5",
       "account": "your_email@gmail.com",
       "sender": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
@@ -121,7 +121,7 @@
       "level_0_judge_reason": "Automated daily digest notification from USPS Informed Delivery with no urgent or personalized content."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfd12955bd79ec",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -144,7 +144,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfd0bbc6f3de5b",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -167,7 +167,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<mid-1778065667895b86fa773abe3@eml.marshalls.com>",
       "account": "your_email@gmail.com",
       "sender": "MARSHALLS EARLY ACCESS <marshalls@eml.marshalls.com>",
@@ -190,7 +190,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfcc4ccf8ad5bd",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -213,7 +213,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0101019dfcb4b15b-ef6d430e-de8a-4db4-befb-89aa278eb8e8-000000@us-west-2.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "Redfin <listings@redfin.com>",
@@ -236,7 +236,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc9a3aa931484",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -259,7 +259,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc8c0981a8ec5",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -282,7 +282,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc7e11272c31b",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -305,7 +305,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc7ddbdf38bce",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -328,7 +328,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc7dd2c612ca4",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -351,7 +351,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc6fa3eaea06f",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -374,7 +374,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc450df077ae2",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -397,7 +397,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc36f349cb638",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -420,7 +420,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc36eaaef8389",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -443,7 +443,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc36e17e5e83f",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -466,7 +466,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc36dcda40e84",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -489,7 +489,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfc28ab8dff9ad",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -512,7 +512,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfb7e5d1d966bd",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -535,7 +535,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<GoFQ6i3ASpSYlIgfyyShnA@geopod-ismtpd-87>",
       "account": "your_email@gmail.com",
       "sender": "\"Weee!\" <hello@sayweee.com>",
@@ -558,7 +558,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfaf08578f148b",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -581,7 +581,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfaf07b1446f64",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -604,7 +604,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfaf070ab01930",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -627,7 +627,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19dfaf06b0e82d27",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -650,7 +650,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<fs2uBRKMj5Mew4_el9cfo14ytyxiuY6d2xJW6A_OWKXkBCcul20jk6NSfaPhLejUzlMBDIOwNM_rqqYeAkHZ-FjdAq0NfGNK4gI3YijiRCiU5pkSmMcETWPntZ2dJCEsv92cG4OqKrH_AAECAA==@t1.msgid.quoramail.com>",
       "account": "your_email@gmail.com",
       "sender": "Quora Digest <english-quora-digest@quora.com>",
@@ -673,7 +673,7 @@
       "level_0_judge_reason": "This is an automated digest email from Quora, a typical low-priority newsletter/notification containing curated content rather than direct personal or business communication."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<15f7bf0a-d0f6-4eaf-beff-c6dab220ac4e@facebookmail.com>",
       "account": "your_email@gmail.com",
       "sender": "He on Facebook <close_friend_updates@facebookmail.com>",
@@ -696,7 +696,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<iVFoYOPS4kLC1XloiTKVQQ@notifications.google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google <no-reply@accounts.google.com>",
@@ -719,7 +719,7 @@
       "level_0_judge_reason": "This is a security alert from Google about a third-party app (CliAccess) being granted access to the user's Google Account data. It could indicate unauthorized access, making it a high-priority security concern."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<3dYnMsfnsr02vx1rAAY9lg@notifications.google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google <no-reply@accounts.google.com>",
@@ -742,7 +742,7 @@
       "level_0_judge_reason": "This is a security alert about a new sign-in to a Google account, which could indicate unauthorized access and requires immediate attention to prevent account compromise."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<_7KMCvBjFgMBL2m_Ld4Jlg@notifications.google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google <no-reply@accounts.google.com>",
@@ -765,7 +765,7 @@
       "level_0_judge_reason": "This is a security alert from Google about a new passkey added to the account, which could indicate unauthorized access. It requires immediate attention to prevent potential account compromise."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<3d7b5443-3619-4c20-8d44-5835a1e47747@ind1s06mta0236.xt.local>",
       "account": "your_email@gmail.com",
       "sender": "Avis <avis@e.avis.com>",
@@ -788,7 +788,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0100019dfa2ae03d-9b03525d-918b-4c7a-a0db-6c54eeec14ec-000000@email.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "\"Amazon.com\" <shipment-tracking@amazon.com>",
@@ -811,7 +811,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<000000000000b03f7806511903e3@google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google Voice <voice-noreply@google.com>",
@@ -834,7 +834,7 @@
       "level_0_judge_reason": "Automated voicemail notification from Google Voice, which is a transactional alert rather than a direct business or critical personal communication."
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<0100019dfa196792-90e3334f-be5a-40d8-a8a4-72179548da8b-000000@email.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "Chime <alerts@account.chime.com>",
@@ -857,7 +857,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<ecb44756-2475-4001-abb3-71c02cc31ecf@atl1s07mta1466.xt.local>",
       "account": "your_email@gmail.com",
       "sender": "Woodinville Square by Toll Brothers <reply@emails.tollbrothers.com>",
@@ -880,7 +880,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<J2rX4X2RSKcslullqNKv7Q@notifications.google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google <no-reply@accounts.google.com>",
@@ -903,7 +903,7 @@
       "level_0_judge_reason": "This is a security alert from Google about a third-party app (CliAccess) being granted access to the user's Google Account data. It could indicate unauthorized access, making it a high-priority security concern."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<9yW6XOz6YRWFecWW6A5-Ng@notifications.google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google <no-reply@accounts.google.com>",
@@ -926,7 +926,7 @@
       "level_0_judge_reason": "This is a security alert from Google about a third-party app (CliAccess) being granted access to the user's Google Account data. It could indicate unauthorized access, making it a high-priority security concern."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0100019df9ee48a1-35e475d1-b6ae-481e-9f8f-b0a23de541bb-000000@email.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "\"Amazon.com\" <shipment-tracking@amazon.com>",
@@ -949,7 +949,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<2b271b1b978a032d37e0cde4cf43eb5718216b41-10001122-111294755@google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google Cloud <googlecloud@google.com>",
@@ -972,7 +972,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<NM673E778BC0CA0149Bverizon_mid_prod13@customer.verizon.com>",
       "account": "your_email@gmail.com",
       "sender": "Verizon <no-reply@customer.verizon.com>",
@@ -995,7 +995,7 @@
       "level_0_judge_reason": "This is a promotional marketing email from Verizon offering a temporary discount on a mobile plan. It is automated, transactional in nature, and does not contain high-priority business or critical personal communication."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df9c2aa57fec2d",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1018,7 +1018,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<AC700000000A04BA5F81C43069Bmscom_mkt_prod127@microsoftstore4.microsoft.com>",
       "account": "your_email@gmail.com",
       "sender": "Microsoft Store <Microsoftstore@microsoftstore.microsoft.com>",
@@ -1041,7 +1041,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<28404c0d114833161d55d26bb7959be11b306e03-20394247-111844521@google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google Home <googlehome@google.com>",
@@ -1064,7 +1064,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<AORZtdCdTP-SVRpDrj4aQQ@geopod-ismtpd-18>",
       "account": "your_email@gmail.com",
       "sender": "Starlink <no-reply@starlink.com>",
@@ -1087,7 +1087,7 @@
       "level_0_judge_reason": "This is a promotional marketing email from Starlink with a Mother's Day offer, sent from a no-reply address, indicating it is an automated advertisement rather than a high-priority business or personal communication."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df989070031b0c",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1110,7 +1110,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<a5a6e348-e49c-42f9-b063-5232f4fa4972@atl1s07mta0605.xt.local>",
       "account": "your_email@gmail.com",
       "sender": "Toll Brothers <reply@emails.tollbrothers.com>",
@@ -1133,7 +1133,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df97b41bb9f5cc",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1156,7 +1156,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0100019df95b6121-5115e84c-cecb-427c-a142-d62e14bcee74-000000@email.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "\"Amazon.com\" <auto-confirm@amazon.com>",
@@ -1179,7 +1179,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<GkgvyIJ-T0emWiJrbBqFow@geopod-ismtpd-94>",
       "account": "your_email@gmail.com",
       "sender": "Chime <alerts@account.chime.com>",
@@ -1202,7 +1202,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0100019df92525e1-1a883640-7f72-47db-a98a-1fc55a5f3af0-000000@email.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "\"Amazon.com\" <auto-confirm@amazon.com>",
@@ -1225,7 +1225,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0100019df924217f-a594aa05-3f6d-41ab-a8db-355b50328339-000000@email.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "\"Amazon.com\" <auto-confirm@amazon.com>",
@@ -1248,7 +1248,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<e03db155-1fd2-2083-d8c7-ce4827961b68@legaleaseplan.com>",
       "account": "your_email@gmail.com",
       "sender": "google@legaleaseplan.com",
@@ -1271,7 +1271,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0215d6f0-a624-4082-8f7e-9cdfb229f108@atl1s07mta2084.xt.local>",
       "account": "your_email@gmail.com",
       "sender": "American Express <americanexpress@member.americanexpress.com>",
@@ -1294,7 +1294,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "19df885612cb04c9",
       "account": "your_email@gmail.com",
       "sender": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
@@ -1317,7 +1317,7 @@
       "level_0_judge_reason": "Automated daily digest notification from USPS Informed Delivery with no urgent or actionable content."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<yFf6TN9kR7KwMtvQ6AU7HQ@geopod-ismtpd-21>",
       "account": "your_email@gmail.com",
       "sender": "Ring Team <no-reply@mail.ring.com>",
@@ -1340,7 +1340,7 @@
       "level_0_judge_reason": "This is a promotional marketing email from Ring encouraging a hardware upgrade. The sender is a no-reply address, and the content is transactional marketing, not a critical business or personal communication."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "19df7f5b39583e6c",
       "account": "your_email@gmail.com",
       "sender": "OpenRouter <noreply@openrouter.ai>",
@@ -1363,7 +1363,7 @@
       "level_0_judge_reason": "Automated notification about a sub-processor change from a service provider, which is a routine operational update with no direct action required."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df7efe1e69cd18",
       "account": "your_email@gmail.com",
       "sender": "FSA Store <info@mail1.fsastore.com>",
@@ -1386,7 +1386,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df77242edf5ec4",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -1409,7 +1409,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "19df76881d377e21",
       "account": "your_email@gmail.com",
       "sender": "UW Primary Clinics <noreply@patients.pgsurveying.com>",
@@ -1432,7 +1432,7 @@
       "level_0_judge_reason": "Automated patient satisfaction survey request from a no-reply address, which is transactional and non-urgent."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df758e53a1c246",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1455,7 +1455,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df73e879387b60",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1478,7 +1478,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df7397d38efdeb",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -1501,7 +1501,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0100019df6efdeff-176e0c0c-4bf4-4895-98a2-4cc29aad6149-000000@email.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "Ollama <hello@ollama.com>",
@@ -1524,7 +1524,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df6b5ce108f888",
       "account": "your_email@gmail.com",
       "sender": "Genmon <genmon-no-reply@shifamily.com>",
@@ -1547,7 +1547,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df672ca79f3ef8",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -1570,7 +1570,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df672c56d6f754",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -1593,7 +1593,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df652ac62cfdd2",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1616,7 +1616,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df6273c8a76d68",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1639,7 +1639,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0101019df5c3e825-53a7032b-5bd6-44e5-8b3f-8518edc119ab-000000@us-west-2.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "Capital One Shopping <hello@accounts.capitaloneshopping.com>",
@@ -1662,7 +1662,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df592737e8284f",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -1685,7 +1685,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<7de61a3e-4f60-4916-b0b6-a5e23f05f400@atl1s07mta3156.xt.local>",
       "account": "your_email@gmail.com",
       "sender": "Schwab Alerts <donotreply@mail.schwab.com>",
@@ -1708,7 +1708,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "19df50f46e6d2fb3",
       "account": "your_email@gmail.com",
       "sender": "Steam <noreply@steampowered.com>",
@@ -1731,7 +1731,7 @@
       "level_0_judge_reason": "Automated promotional email from a digital storefront about a wishlist item sale. It is a transactional marketing notification, not a direct business or critical personal communication."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<NsmpTaK_T72QzTZljruAzw@geopod-ismtpd-22>",
       "account": "your_email@gmail.com",
       "sender": "Your Klein Park neighbors <no-reply@is.email.nextdoor.com>",
@@ -1754,7 +1754,7 @@
       "level_0_judge_reason": "This is an automated notification from Nextdoor (a neighborhood social network) about a top post. The sender address 'no-reply@is.email.nextdoor.com' and the generic subject indicate it's a non-urgent, non-personalized digest or alert, not a direct business or critical personal communication."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<31e5ec4abc1fcbe60c360eaba697d6019d253c3c-20393314-337030291@google.com>",
       "account": "your_email@gmail.com",
       "sender": "Google Gemini <google-gemini-noreply@google.com>",
@@ -1777,7 +1777,7 @@
       "level_0_judge_reason": "This is a promotional/marketing email from Google Gemini encouraging the user to use a feature (bringing AI memories and chat history). It is an automated, non-personalized notification with no urgent business or critical personal content."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0101019df4b7b4b8-9c557b81-94f7-4323-bb1a-59fb85746b31-000000@us-west-2.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "Redfin <listings@redfin.com>",
@@ -1800,7 +1800,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<ed538939-9c6e-4f15-885d-d99e42f1aade@atl1s07mta3166.xt.local>",
       "account": "your_email@gmail.com",
       "sender": "\"Charles Schwab & Co., Inc.\" <donotreply@mail.schwab.com>",
@@ -1823,7 +1823,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df45345303d1f7",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1846,7 +1846,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df45228ee7c534",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1869,7 +1869,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df451e74057341",
       "account": "your_email@gmail.com",
       "sender": "radarr-donotreply@shifamily.com",
@@ -1892,7 +1892,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<QW3KMcC9-Bp2TWFj48fMD2TRWlzAkxt0_EB10s2PvkZiSnysDmUWJxzaS4j5cSmvGS5WS4gEfwCzpW7d2cNYDiwnMuULO74YSmfUSLhezyQSN_Vi_31ITpyXRRjo2P602QluBUo_1BetLcMAAQIA@t1.msgid.quoramail.com>",
       "account": "your_email@gmail.com",
       "sender": "Quora Digest <english-quora-digest@quora.com>",
@@ -1915,7 +1915,7 @@
       "level_0_judge_reason": "This is an automated Quora Digest email, which is a newsletter-style notification containing curated content from the platform. It is not a direct personal or business communication."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "19df36406892f18c",
       "account": "your_email@gmail.com",
       "sender": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
@@ -1938,7 +1938,7 @@
       "level_0_judge_reason": "Automated daily digest notification from USPS Informed Delivery with no urgent or actionable content."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<Bd3ToVnFTg-bc_lV6Gge3g@geopod-ismtpd-68>",
       "account": "your_email@gmail.com",
       "sender": "Glassdoor Community <noreply@glassdoor.com>",
@@ -1961,7 +1961,7 @@
       "level_0_judge_reason": "The email is from a Glassdoor automated notification address (noreply@glassdoor.com) with a subject line that appears to be a snippet from a community discussion, and the snippet indicates it is promotional content ('Explore real talk from across Glassdoor'). This is typical of low-priority marketing or engagement emails, not a direct business or critical personal communication."
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "19df35b9136480f4",
       "account": "your_email@gmail.com",
       "sender": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
@@ -1984,7 +1984,7 @@
       "level_0_judge_reason": "Automated daily digest notification from USPS Informed Delivery with no urgent or actionable content."
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<79e2803e-b55e-42c9-b498-dcf3284f01b3@atl1s07mta2083.xt.local>",
       "account": "your_email@gmail.com",
       "sender": "American Express <americanexpress@member.americanexpress.com>",
@@ -2007,7 +2007,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<0100019df2fd124c-cd0d243e-862c-450d-9625-27d4f90963a8-000000@email.amazonses.com>",
       "account": "your_email@gmail.com",
       "sender": "Amazon Marketplace <marketplace-messages@amazon.com>",
@@ -2030,7 +2030,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df20348fb4142a",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2053,7 +2053,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df19c3c94075b1",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2076,7 +2076,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df19ae56fac0bf",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2099,7 +2099,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df19986bbe5164",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2122,7 +2122,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19df1988ec1ff689",
       "account": "your_email@gmail.com",
       "sender": "Genmon <genmon-no-reply@shifamily.com>",
@@ -2145,7 +2145,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df1982f23f4aa4",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2168,7 +2168,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df19827c066a96",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2191,7 +2191,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df196eae1fac52",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2214,7 +2214,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df196e4807b40a",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2237,7 +2237,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df191bfa18fe69",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2260,7 +2260,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df18e78f58e950",
       "account": "your_email@gmail.com",
       "sender": "Genmon <genmon-no-reply@shifamily.com>",
@@ -2283,7 +2283,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19df0d95d2f2d338",
       "account": "your_email@gmail.com",
       "sender": "sonarr-donotreply@shifamily.com",
@@ -2306,7 +2306,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19dba1d07304baff",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2329,7 +2329,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19d54e06ce694589",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2352,7 +2352,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19d35cf25a1ceb5d",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2375,7 +2375,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19d352105a6e872f",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2398,7 +2398,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19bf0f454b481c01",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2421,7 +2421,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19bed7eb2682dd95",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2444,7 +2444,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19bec3206cb050a6",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2467,7 +2467,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19aa7851f5264fe7",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2490,7 +2490,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "195f73a779ef3aff",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2513,7 +2513,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "1953a601b46ed341",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2536,7 +2536,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "194d7b50b4a9bf1b",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2559,7 +2559,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19408d3060f9e247",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2582,7 +2582,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19335cfb3b69e8ee",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2605,7 +2605,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "192caeedf17c4824",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2628,7 +2628,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "192912e8bcde2454",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2651,7 +2651,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19269116e6292cfd",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2674,7 +2674,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "1926475f3a94dd9b",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2697,7 +2697,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19220d67dc078182",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2720,7 +2720,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "191ec541ec489d3d",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2743,7 +2743,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "191e792bbb743c81",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2766,7 +2766,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "191c9271fb58dedd",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2789,7 +2789,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "191a43a0c67c158d",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2812,7 +2812,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "191a0a40c3093dc0",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2835,7 +2835,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "191970ac153e4a19",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2858,7 +2858,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19196dfc371c6c5c",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2881,7 +2881,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "191917c4aab2b107",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2904,7 +2904,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "1917737387fd0019",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2927,7 +2927,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "1917517b980280e2",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2950,7 +2950,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "1915eda86f5a63c7",
       "account": "your_email@gmail.com",
       "sender": "Nate Garhart <ngarhart@gmail.com>",
@@ -2973,7 +2973,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBTQ80jBx+RvGWJ=7_sFeUL9N-gDDwpLSLeBWJ6YiJuoWA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -2996,7 +2996,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBT75c1p+hpfXA3gWsruXvfg8riBfh-cp98hL__Mcxvw8Q@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3019,7 +3019,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBRg1axu9f5dJkBvf1PH65xuH2untYQB0-yUqu7ZR7kQ1A@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3042,7 +3042,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBSMwSUC_nkTp97Z00pGH7u-ouR6O3iuRaackMyTPh+GDQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3065,7 +3065,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBQJMueUfD0fh725tis9a0QCO9VB+b0p3i=2yAQcRAwb_g@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3088,7 +3088,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBQVJKTOgXNMFxvwnvG-87Zi1fPsykqr7ah4NXpk2eHPgA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3111,7 +3111,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQ_KT_Ft8HOjdbBSSQcZPrcAEntmzEa3d=JXWORHNEtOw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3134,7 +3134,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19c8cdeaf7579a35",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3157,7 +3157,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBTji64NtqdwzHB7F227gGzgU+S0YvuTCpMH2=X1C1hufw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3180,7 +3180,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBR-iZHS8JRiy08zv4FjoMQZkdWJ8p_sPBcAQ5CCgKAE9w@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3203,7 +3203,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "19bd3ed67d933d67",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3226,7 +3226,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBRGR1b+D7ijd1XQyxMDwy2gmSJWb1tejUT_AQWwftTw+A@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3249,7 +3249,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQJ1r+-1dSrTu6A6Jm8wg6JPL1nO3iZ4QJewk9pujQ35A@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3272,7 +3272,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTwBFK4jp5BVnqXBp=vjtwbjwfpWsu1GhZ1zE5E0_5O1w@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3295,7 +3295,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSHxNQqGWaCzCbzEf8Cb+w34CX1R4qui6FQqNYWuypr7Q@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3318,7 +3318,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBQ5ut2uVRxPX4fkiQ=02XyZ0HPkHpQDcC903gPRxKmoMA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3341,7 +3341,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSpZbfXcf=uc3iprJ2TmPxZqRoyEFWckZCHpOaNCUxdtg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3364,7 +3364,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBR7AS3NNHk6x77NBGAy-_qD=Z9Wx7sQD6-_jBikP0gLiQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3387,7 +3387,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBRLoAEeo5WiKNZp6uRHhCe7VmQvvm1mctN-F2sDi9thUg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3410,7 +3410,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBRGc_UV2GXGJ4wPe9T_gNDKCruX5WVyB713U3HCA04btg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3433,7 +3433,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "19b1086561269837",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3456,7 +3456,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBS5ghkA5WXQ+7OoJDrrsAKfK4ACq0BWoXWM+dbAe9in9g@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3479,7 +3479,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<calendar-32f0d17a-2689-4a9b-86e4-4a43990e7a54@google.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3502,7 +3502,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBRd4meX+N0RPVTyUAZvnz64hxQW7ENSDajqL+7pyp2FKw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3525,7 +3525,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBSEXPvDPKqi2fKUdL+P8aesSTbg07VtB7soXRzBap-PmA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3548,7 +3548,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBTs4xDCWeAhBh-4t=xD+MVvneQYX-XvvH0xKZJ96KtW6w@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3571,7 +3571,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBQaY-gaSgsZRLcn0NL4+sbdLSdE===PfvaqgLtL6t++AQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3594,7 +3594,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBS_9Ha511o-a6LYCmTqLHu3r9tDASdMJHeEzXVPBqmWEQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3617,7 +3617,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBR0mT7sTmeKFdFo7YewLMh7xNCbFdamLhqAwHZoJNKH3A@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3640,7 +3640,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBSg5BoronEFBjHTGimyyi5jW77PQN0tpEOTg98o3Ct-Fw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3663,7 +3663,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBTn-QhBN2bp0-vLmbv1Wue5OMGioc9e1JkE+m2T8p74LA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3686,7 +3686,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "1984e50dcf200199",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3709,7 +3709,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBTokc8rEb0x1PgXEED6TE1RVhAd5soKhpa4W3ns8HqC7Q@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3732,7 +3732,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 0",
+      "triage_level": 0,
       "message_id": "<CAJ=4dBQOMAkbjhLcX9VPy8Fc2Gpt_fMsLFSKXSdgSZ-z-GVwag@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3755,7 +3755,7 @@
       "level_0_judge_reason": "The email contains a personal message from a real person forwarding a mail delivery notification to inform the recipient about the arrival of an important item (an AE card), making it a high-priority personal update."
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBQPw0S_mBVGVTT5uo1i2qzi3Pnf5W4FVzSGQOoKnB1U+g@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3778,7 +3778,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBS0G7L0xC3y+Vjk=mgaxkFdMKb=C+6gEz8EMK5a=so7CA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3801,7 +3801,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "1972411b0796d661",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3824,7 +3824,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBRhRb5FX6UrVMKqWgihata2HOotRK4UzW3o3K8pstNQiQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3847,7 +3847,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTzP7zXxCDsw1eVbzO8MRMfPGJAYoLjLqsC9oEO44ZY2g@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3870,7 +3870,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBS46xC3EXR9bTWVhNO6Q9nE6xUEWZLgPwUJKrCRAgxC3g@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3893,7 +3893,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTu==ntji_Jh=UaRWNjL5zUfXPbMG7o=yLj3rBdLKAWVw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3916,7 +3916,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBR6oaGiVbjC-agV3P-aL1ur5V+wbh908uHSzfPPbLy3nQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3939,7 +3939,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTxs0dO+dTK4EPJpPTax-ROtDx34+iopD2pX=Nxge8EqA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3962,7 +3962,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTBkPpe3vRnaU=6xERCFT+MzcoqUmT=uefp2KbgGjt4Kw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -3985,7 +3985,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQ70ozdeVcNQyTjZxUPAfn1GTrOVJeaCxkLjgBA-2y-VQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4008,7 +4008,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSb3OTLZc7gAdYQeodvT+EoWMcnLchf9vJ6w1oeonw3YA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4031,7 +4031,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQBNcR2=jzxkWBVE8x0fmKJsE6-5T1pCA+Ka9RZuiGQrg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4054,7 +4054,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTxxeM4n+S7dc-NgZy6d-L8-_j8F4EidzRkbOVryQK6eQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4077,7 +4077,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBRi0Rhw9wNUEVmO1Put59dNMdMY3-Hu+EBRzjZ8+VS_ww@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4100,7 +4100,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTJLBsAaA-3V7DupLXEOimPNFpTjyQ6n+nsyjeUT2XuAQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4123,7 +4123,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBRsFEzyurDLUiTjv3yJQnnoghwWWzwcTEW9hEB2e6g-Mw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4146,7 +4146,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBQqOU+uW6eqanJxLhbTF3B2FfhJgab2pfmSNraCO1Km1w@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4169,7 +4169,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "196a2a83198278bc",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4192,7 +4192,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSt+cVqenXXrfS2bYfuizzEH7pW70jXLka+SpLKocwnyg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4215,7 +4215,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBRTuW51eyctZpdrYH551PevrfdFvc19hJXevvhBe2GEkw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4238,7 +4238,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBRN1uqLs20BjiHTe=6Bb+DtKV1Brg0gBY_4vL2Ri26qxg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4261,7 +4261,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBTa9m+Sg6_WfKSWe3y_12eaqkDmtxn5Y3eBuSojac20cg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4284,7 +4284,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "1957333188ebb7ff",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4307,7 +4307,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<calendar-7ac64dda-1d2f-411a-98e1-428da4d46953@google.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4330,7 +4330,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQ1Y0JuZ1_yWojxbCwVJkarmjwtOCUyLxjM3Ztai0J61w@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4353,7 +4353,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBTY-A=uWb_OW=cv9bqkFSdk80Tv5EfVL44cZo+5FhCzqw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4376,7 +4376,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBR0ZOrUu3Z7+ZugzsbL0m2N4FjbpQ4oAiZ3OEznYep+1Q@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4399,7 +4399,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSppDm9syC3QVEbZsbMMsgRAEHea=vB+ep_cef5tXwCOw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4422,7 +4422,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQ+4tEdOm3buzXOqokyHcan=WLaY8T0TSVMAfdouPAOiQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4445,7 +4445,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBR4MFiku4xJZNF+r+C7W0a6t+ZX=Zc=GDANCZRefuAwSQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4468,7 +4468,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQoEAERqyM_bXjvvR6COBXdYqjU_o868_n4B_SuKFq0Vg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4491,7 +4491,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSnWqpxJutu3+biKg_n0uK9hVVcZ2Z4_Do4CV_=RbO3bg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4514,7 +4514,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTJsZ7xN4R4sBR-nvx9B9vb1Fwr4HTTFMCHGV7bnLVGeQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4537,7 +4537,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBRw5LamFW0YgRPnMmgKvMG5+Gfbn5N51uFmgXRKBxCVmA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4560,7 +4560,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSc+XKs7z3Nt4saMpss+XmQo_w0mX==1n8mYhN-Oqg=sA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4583,7 +4583,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQJb5AELarBkbsCN8vOFF9BLtUYPf1aFeOi1QEDUH5amw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4606,7 +4606,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSU4DX5QTqkq3Yoh6v1K-Mt72dGCM=v6zUrqY=-xdKy6Q@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4629,7 +4629,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSiANqdZL2VhzRPPaxWmbxV7YB0mbWrLKmvFJ+=ZrS2OQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4652,7 +4652,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSBSdHm5=_0MWHBDn+7mRaBQ+RiUpcHW_x1d+okNHNrUQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4675,7 +4675,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTzUrRDo+uY6Zjzkj_iVFc38xC6+1pqgQDkSYwLw7R0Fg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4698,7 +4698,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTf3b35k1RR4Ya5M+ezE9_ukSABHiK13SV7UmgQOJA_uw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4721,7 +4721,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSbnzOTwZy5pzKqq49b4FnL5hpuhv2YRXOAjN3=57dCmg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4744,7 +4744,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTiR3DCmp7ERx09+qEBcAVZxJ+B=RO7s_rsbFo8-G5VKA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4767,7 +4767,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSrGjK17uK71O4zH65AVxRaCK8kyj51QmLjFxmO+iefAQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4790,7 +4790,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTY5v3bZsB2-NWu0vJq1e=4HkXfTekshSn5706tFopSFQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4813,7 +4813,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQRrE2JCa1J3yf_4AQJVLGbuB5PcFc444XdaPQg97eAmQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4836,7 +4836,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBT2v+Q6k-Mdh4TmcBJ7aZ5s9c33ZxpuisxRoH9Em-r5Dw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4859,7 +4859,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSGV1fS-0s329Ks_8vrf5_TBVFa4NXnp5kDZtRs=K=3dA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4882,7 +4882,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSE3Ot2w3fUKPSu9xwTR9KDp7pZmAkEDrN2f+k6MPFUeg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4905,7 +4905,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSXumQF+fuGM3Pbu-jduJ0U8KjUQvSWe+GuWfnN1=O72A@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4928,7 +4928,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTW1U6JdxWdwq3i7tUnixpewD1K_S7HSQKqtdqnh7wzWg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4951,7 +4951,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBR4sbKbnzd2qH1rcGn9nmtSqgmR5bgh=M5i2j=g3hDTtA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4974,7 +4974,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBT0gMfJXKcd8w4aWB1ZC5=sGr_=r7WpRp+rk54Q1_BYew@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -4997,7 +4997,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBTas8377hzSC2Uaq+iW_JfVThsYHSMD+yf1BfOr1mE0AA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5020,7 +5020,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQ2AP+wd-M_9GoTRpA57Y9Wu0XR2uoWUBESWJY_mHcOeQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5043,7 +5043,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQ2w0GgyeXomdTJMdh=bePWfcif7DPpRrOis3ciJ5Sr5A@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5066,7 +5066,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBSV5rjmo7cdKPMmn0Bmjs80+smpMu7hTUoybqjCgP72YA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5089,7 +5089,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQSBCwWTz3yANvRzi7SJk6pu2HN+CwFfYaGkWy3BSwBvA@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5112,7 +5112,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQT8EHT-h8HCaBwE8+na_2NzNh0oxg7XrSHdUxnd1sTGg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5135,7 +5135,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBT8cr9CFiJYMh8=phgSpuPTBzuLmeda93YiQycrAfnHCg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5158,7 +5158,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBQUMf3k7QT32N6USptQLP4dzgg-EGqcAOrs40bWtJw6sw@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5181,7 +5181,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 1",
+      "triage_level": 1,
       "message_id": "<CAJ=4dBQeAfP9drov5+tiaVDbDfz=4D8E766BjWfRCKSw3G1A4g@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5204,7 +5204,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBRTo=OEM9JZOZW=br9a+JGC+aFz+aNVqwR7eAtoHBVLag@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5227,7 +5227,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBRm-fxriwN+qM9e3WzPDfUyKDJS1JKAXcMyMDN2572fjQ@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",
@@ -5250,7 +5250,7 @@
       "level_0_judge_reason": null
     },
     {
-      "triage_level": "Level 2",
+      "triage_level": 2,
       "message_id": "<CAJ=4dBQCsY1fy9yHYWHCJms+Ok_y2cVyCVUtuwcSOhjfcnNqtg@mail.gmail.com>",
       "account": "your_email@gmail.com",
       "sender": "Jenny Chen <your_vip_email@gmail.com>",

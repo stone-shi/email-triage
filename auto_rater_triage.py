@@ -21,7 +21,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
     configs_data = {}
     
     for f_path in files:
-        with open(f_path, "r") as f:
+        with open(f_path.resolve(), "r", encoding="utf-8") as f:
             data = json.load(f)
         configs_data[data["configuration_name"]] = data
         
@@ -101,7 +101,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
 
 def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
-    data_dir = workspace_dir / "auto_rater_data"
+    data_dir = (workspace_dir / "auto_rater_data").resolve()
     result_files = list(data_dir.glob("auto_rater_results_*.json"))
     
     if not result_files:
@@ -136,11 +136,17 @@ def main() -> None:
 
     report = analyze_results(result_files, baseline_name)
     
-    output_report_path = data_dir / "auto_rater_triage_report.md"
-    with open(output_report_path, "w", encoding="utf-8") as f:
-        f.write(report)
-        
-    logger.info("Successfully compiled Triage Accuracy Report to %s", output_report_path)
+    output_report_path = workspace_dir / "auto_rater_data" / "auto_rater_triage_report.md"
+    try:
+        try:
+            output_report_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        with open(output_report_path, "w", encoding="utf-8") as f:
+            f.write(report)
+        logger.info("Successfully compiled Triage Accuracy Report to %s", output_report_path)
+    except Exception as e:
+        logger.warning("Could not write report to %s (%s).", output_report_path, e)
     print("\n" + report + "\n")
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 
 *_client.json
 auto_rater_data/
+auto_rater_data_backup/
 *.db
 
 # Byte-compiled / optimized / DLL files

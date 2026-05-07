@@ -46,7 +46,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
         total = len(data["results"])
         l0_filtered = sum(1 for r in data["results"] if r["triage_level"] == "Level 0")
         l1_unimportant = sum(1 for r in data["results"] if r["triage_level"] == "Level 1")
-        important = sum(1 for r in data["results"] if r["triage_level"] == "Level 2")
+        important = sum(1 for r in data["results"] if r["triage_level"].startswith("Level 2"))
         
         report_lines.append(f"### 🔍 Configuration: `{name}`")
         report_lines.append(f"- **Total Scanned Envelopes**: {total}")
@@ -58,7 +58,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
     # Benchmark Alignment Analysis using the gold baseline configuration if present
     if baseline_name in configs_data and len(configs_data) > 1:
         report_lines.append("## 📉 Benchmark Alignment Analytics (Relative to Baseline)")
-        baseline_results = {r["message_id"]: (r["triage_level"] == "Level 2") for r in configs_data[baseline_name]["results"] if r["triage_level"] != "Level 0"}
+        baseline_results = {r["message_id"]: (r["triage_level"].startswith("Level 2")) for r in configs_data[baseline_name]["results"] if r["triage_level"] != "Level 0"}
         
         for name, data in configs_data.items():
             if name == baseline_name:
@@ -73,7 +73,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
                     continue
                     
                 actual_important = baseline_results[msg_id]
-                pred_important = (r["triage_level"] == "Level 2")
+                pred_important = (r["triage_level"].startswith("Level 2"))
                 
                 if actual_important and pred_important:
                     tp += 1

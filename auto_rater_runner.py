@@ -27,7 +27,7 @@ def extract_json(text: str) -> str:
             return match.group(1).strip()
     return text
 
-def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, emails_timestamp: float, force_rerun: bool = False) -> None:
+def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, force_rerun: bool = False) -> None:
     config_name = config["name"]
     triage_model = config["triage_model"]
     summary_model = config["summary_model"]
@@ -35,14 +35,17 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     output_file = workspace_dir / "auto_rater_data" / f"auto_rater_results_{config_name}.json"
     
     existing_results: Dict[str, Dict[str, Any]] = {}
+    existing_total_duration = 0.0
     if output_file.exists() and not force_rerun:
         try:
             with open(output_file, "r", encoding="utf-8") as out_f:
                 old_payload = json.load(out_f)
             existing_results = {r["message_id"]: r for r in old_payload.get("results", [])}
+            existing_total_duration = old_payload.get("total_processing_all_emails_duration_sec", 0.0)
             logger.info("Incremental Mode Active: Loaded %d already processed items from cache.", len(existing_results))
         except Exception:
             existing_results = {}
+            existing_total_duration = 0.0
 
     logger.info("==================================================")
     logger.info("Executing Test Configuration: '%s'", config_name)
@@ -62,7 +65,8 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     dummy_db = EmailDB(db_path=workspace_dir / "email_cache.db")
     engine = EmailTriageEngine(dummy_db)
     
-    total_start_time = time.time()
+    new_emails_duration = 0.0
+    processed_any_new = False
     
     for idx, email in enumerate(emails, 1):
         sender = email["sender"]
@@ -142,6 +146,8 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 continue # Skip caching if judge audit failed
 
             metrics["total_email_process_duration_sec"] = time.time() - email_start_time
+            new_emails_duration += metrics["total_email_process_duration_sec"]
+            processed_any_new = True
             run_results.append(metrics)
             continue
             
@@ -271,16 +277,20 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             continue
             
         metrics["total_email_process_duration_sec"] = time.time() - email_start_time
+        new_emails_duration += metrics["total_email_process_duration_sec"]
+        processed_any_new = True
         run_results.append(metrics)
         
-    total_duration = time.time() - total_start_time
+    if processed_any_new:
+        total_duration = existing_total_duration + new_emails_duration
+    else:
+        total_duration = existing_total_duration
     
     # Package wrapper container with complete benchmark group telemetry metadata
     output_payload = {
         "configuration_name": config_name,
         "triage_model": triage_model,
         "summary_model": summary_model,
-        "offline_emails_timestamp": emails_timestamp,
         "total_processing_all_emails_duration_sec": total_duration,
         "total_emails_processed": len(emails),
         "results": run_results
@@ -300,9 +310,6 @@ def main() -> None:
     if not config_path.exists() or not emails_path.exists():
         logger.error("Required files missing. Make sure config and offline_emails.json exist.")
         sys.exit(1)
-        
-    emails_timestamp = emails_path.stat().st_mtime
-        
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f) or {}
         
@@ -347,15 +354,6 @@ def main() -> None:
                     existing_data = json.load(out_f)
             except Exception:
                 existing_data = {}
-                
-            # 1. Migration Layer Pass: Lacks timestamp metadata field entirely
-            if "offline_emails_timestamp" not in existing_data:
-                existing_data["offline_emails_timestamp"] = emails_timestamp
-                with open(output_file, "w", encoding="utf-8") as out_f:
-                    json.dump(existing_data, out_f, indent=2, ensure_ascii=False)
-                logger.info("Schema Migration: Legacy result file upgraded in-place with timestamp for '%s'. Skipping execution pass.", cfg_name)
-                continue
-                
             # 2. Model Definition Modifications Guard Abort Check
             if existing_data.get("triage_model") != triage_model or existing_data.get("summary_model") != summary_model:
                 if not args.force:
@@ -364,7 +362,7 @@ def main() -> None:
                 logger.info("Force override active: Overwriting modified model pairs for configuration '%s'...", cfg_name)
         
         try:
-            run_config(cfg, emails, workspace_dir, judge_model, emails_timestamp, force_rerun=args.force)
+            run_config(cfg, emails, workspace_dir, judge_model, force_rerun=args.force)
         except Exception as e:
             logger.error("Configuration run failed for %s: %s", cfg_name, e)
             continue

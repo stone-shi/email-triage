@@ -97,6 +97,48 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
             report_lines.append(f"- **Confusion Matrix Counts**: [True Important: {tp}, False Important: {fp}, False Noise: {fn}, True Noise: {tn}]")
             report_lines.append("")
 
+    platinum_name = "baseline_platinum_human"
+    if platinum_name in configs_data and len(configs_data) > 1:
+        report_lines.append("## 💎 Human Platinum Alignment Analytics (Gold Standard)")
+        plat_results = {r["message_id"]: (r["triage_level"] == 2) for r in configs_data[platinum_name]["results"] if r["triage_level"] != 0}
+        
+        for name, data in configs_data.items():
+            if name == platinum_name:
+                continue
+            
+            tp, fp, fn, tn = 0, 0, 0, 0
+            for r in data["results"]:
+                if r["triage_level"] == 0:
+                    continue
+                msg_id = r["message_id"]
+                if msg_id not in plat_results:
+                    continue
+                    
+                actual_important = plat_results[msg_id]
+                pred_important = (r["triage_level"] == 2)
+                
+                if actual_important and pred_important:
+                    tp += 1
+                elif not actual_important and pred_important:
+                    fp += 1
+                elif actual_important and not pred_important:
+                    fn += 1
+                else:
+                    tn += 1
+                    
+            accuracy = (tp + tn) / (tp + fp + fn + tn) if (tp + fp + fn + tn) > 0 else 0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+            
+            report_lines.append(f"### 💎 `{name}` alignment against human `{platinum_name}`:")
+            report_lines.append(f"- **Relative Classification Accuracy**: {accuracy*100:.1f}%")
+            report_lines.append(f"- **Relative Precision**: {precision*100:.1f}%")
+            report_lines.append(f"- **Relative Recall**: {recall*100:.1f}%")
+            report_lines.append(f"- **Relative F1 Score Balance Metric**: {f1:.3f}")
+            report_lines.append(f"- **Confusion Matrix Counts**: [True Important: {tp}, False Important: {fp}, False Noise: {fn}, True Noise: {tn}]")
+            report_lines.append("")
+
     return "\n".join(report_lines)
 
 def main() -> None:
@@ -131,7 +173,8 @@ def main() -> None:
     if args.compare:
         baseline_filename = f"auto_rater_results_{baseline_name}.json"
         compare_filename = f"auto_rater_results_{args.compare}.json"
-        result_files = [f for f in result_files if f.name == baseline_filename or f.name == compare_filename]
+        platinum_filename = "auto_rater_results_baseline_platinum_human.json"
+        result_files = [f for f in result_files if f.name in [baseline_filename, compare_filename, platinum_filename]]
         logger.info("Targeted comparison active: comparing '%s' against baseline standard '%s'", args.compare, baseline_name)
 
     report = analyze_results(result_files, baseline_name)

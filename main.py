@@ -40,6 +40,45 @@ def process_account_emails(
         if human_mode:
             logger.info("Processing incoming email: '%s' from %s", subject, sender)
 
+        # VIP Whitelist Override Layer -> Direct to Level 2
+        from config import settings
+        is_vip = False
+        for vip in getattr(settings.triage, "whitelist_vip_senders", []):
+            if vip.lower() in sender.lower():
+                if human_mode:
+                    logger.info("VIP hit: Sender '%s' is a whitelisted VIP. Bypassing Level 0 and Level 1 directly to Level 2!", sender)
+                is_vip = True
+                break
+                
+        if is_vip:
+            # Skip Level 0 & 1, go straight to fetch body and Level 2 summary
+            full_id = email["id"]
+            full_body = client_source.fetch_full_body(full_id)
+            summary, summary_score = engine.run_level_2_summarization(subject, full_body)
+            
+            db.save_triage_result(
+                msg_id, account, sender, subject, date_str,
+                level_0_status="passed", level_1_status="important", level_2_summary=summary
+            )
+            
+            run_results.append({
+                "triage_level": "Level 2 (VIP)",
+                "message_id": msg_id,
+                "account": account,
+                "sender": sender,
+                "subject": subject,
+                "date": date_str,
+                "reason": "VIP Sender Direct Escalation",
+                "summary": summary,
+                "score": summary_score
+            })
+            stats["important_identified"] += 1
+            
+            if human_mode:
+                from notifier import EmailNotifier
+                EmailNotifier.print_terminal_banner(subject, sender, "VIP Sender Direct Escalation", summary, summary_score)
+            continue
+
         # 2. Level 0 Static Regex Filter
         is_noise, l0_reason = engine.run_level_0_static(sender, subject)
         if is_noise:

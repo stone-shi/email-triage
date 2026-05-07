@@ -9,6 +9,7 @@ class TriageSettings(BaseModel):
     confidence_threshold: float = 0.8
     triage_type: str = "llm"
     tei_url: str = "http://10.100.0.50:8077/predict"
+    whitelist_vip_senders: List[str] = []
     whitelist_domains: List[str] = []
     blacklist_keywords: List[str] = [
         "unsubscribe", "newsletter", "promotions", "marketing", 
@@ -71,6 +72,8 @@ class Settings(BaseSettings):
                     self.triage.triage_type = triage_data["triage_type"]
                 if "tei_url" in triage_data:
                     self.triage.tei_url = triage_data["tei_url"]
+                if "whitelist_vip_senders" in triage_data:
+                    self.triage.whitelist_vip_senders = triage_data["whitelist_vip_senders"]
                 if "whitelist_domains" in triage_data:
                     self.triage.whitelist_domains = triage_data["whitelist_domains"]
                 if "blacklist_keywords" in triage_data:

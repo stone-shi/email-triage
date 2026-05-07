@@ -27,7 +27,7 @@ def extract_json(text: str) -> str:
             return match.group(1).strip()
     return text
 
-def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, force_rerun: bool = False) -> None:
+def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False) -> None:
     config_name = config["name"]
     triage_model = config["triage_model"]
     summary_model = config["summary_model"]
@@ -136,7 +136,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 )
             try:
                 l0_payload = {
-                    "model": judge_model,
+                    "model": level_0_judge_model,
                     "messages": [
                         {"role": "system", "content": l0_audit_system},
                         {"role": "user", "content": l0_audit_prompt}
@@ -340,6 +340,7 @@ def main() -> None:
         
     configs = config_data.get("test_configurations", [])
     judge_model = config_data.get("judge_model", "deepseek/deepseek-v4-pro")
+    level_0_judge_model = config_data.get("level_0_judge_model", judge_model)
     if not configs:
         logger.error("No test configurations found in config file.")
         sys.exit(1)
@@ -378,7 +379,7 @@ def main() -> None:
                 logger.info("Force override active: Overwriting modified model pairs for configuration '%s'...", cfg_name)
         
         try:
-            run_config(cfg, emails, workspace_dir, judge_model, force_rerun=args.force)
+            run_config(cfg, emails, workspace_dir, judge_model, level_0_judge_model, force_rerun=args.force)
         except Exception as e:
             logger.error("Configuration run failed for %s: %s", cfg_name, e)
             continue

@@ -55,6 +55,13 @@ class EmailTriageEngine:
             return len(self.encoder.encode(text))
         return len(text) // 4
 
+    def is_vip_sender(self, sender: str) -> bool:
+        """Checks if the sender matches any entry in the VIP whitelist."""
+        for vip in getattr(settings.triage, "whitelist_vip_senders", []):
+            if vip.lower() in sender.lower():
+                return True
+        return False
+
     def run_level_0_static(self, sender: str, subject: str) -> Tuple[bool, Optional[str]]:
         """
         Level 0 Triage: Static noise filter via regex keywords.

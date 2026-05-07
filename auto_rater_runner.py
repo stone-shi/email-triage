@@ -117,6 +117,50 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             "level_0_judge_reason": None
         }
         
+        # VIP Whitelist Override Layer -> Direct to Level 2
+        if engine.is_vip_sender(sender):
+            logger.info("VIP hit: Sender '%s' is a whitelisted VIP. Bypassing Level 0 and Level 1 directly to Level 2!", sender)
+            metrics["triage_level"] = "Level 2 (VIP)"
+            metrics["reason"] = "VIP Sender Direct Escalation"
+            
+            if not full_body or len(full_body.strip()) < 10:
+                metrics["summary"] = "No substantive content to summarize."
+            else:
+                l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
+                l2_system = prompts.get("level_2_summarization", {}).get("system", "")
+                l2_start = time.time()
+                try:
+                    l2_payload = {
+                        "model": summary_model,
+                        "messages": [
+                            {"role": "system", "content": l2_system},
+                            {"role": "user", "content": l2_prompt}
+                        ],
+                        "temperature": 0.2
+                    }
+                    resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
+                    resp.raise_for_status()
+                    resp_json = resp.json()
+                    
+                    usage = resp_json.get("usage", {})
+                    metrics["level_2_prompt_tokens"] = usage.get("prompt_tokens", 0)
+                    metrics["level_2_completion_tokens"] = usage.get("completion_tokens", 0)
+                    
+                    content = resp_json["choices"][0]["message"]["content"]
+                    result_dict = json.loads(extract_json(content))
+                    
+                    metrics["summary"] = result_dict.get("summary", "")
+                    metrics["score"] = result_dict.get("confidence_score", 1.0)
+                except Exception as e:
+                    logger.error("Level 2 VIP summary failed for email %s: %s", msg_id, e)
+                    metrics["summary"] = f"Level 2 summarization error: {str(e)}"
+                    
+                metrics["level_2_duration_sec"] = time.time() - l2_start
+                
+            metrics["total_email_process_duration_sec"] = time.time() - email_start_time
+            run_results.append(metrics)
+            continue
+
         # 1. Level 0 Static Filter
         is_noise, l0_reason = engine.run_level_0_static(sender, subject)
         if is_noise:

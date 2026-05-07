@@ -1,7 +1,7 @@
 llm:
   base_url: "https://your-llm-proxy.com/v1"
   triage_model: "deepseek/deepseek-v4-flash"
-  summary_model: "deepseek/deepseek-v4-pro"
+  summary_model: "deepseek/deepseek-v4-flash"
 
 triage:
   confidence_threshold: 0.8
@@ -10,7 +10,7 @@ triage:
   whitelist_vip_senders:
     - "your_vip_email@gmail.com"
   whitelist_domains:
-    - "@shifamily.com"
+    - "@none"
   blacklist_keywords:
     - "unsubscribe"
     - "newsletter"

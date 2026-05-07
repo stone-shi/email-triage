@@ -41,16 +41,9 @@ def process_account_emails(
             logger.info("Processing incoming email: '%s' from %s", subject, sender)
 
         # VIP Whitelist Override Layer -> Direct to Level 2
-        from config import settings
-        is_vip = False
-        for vip in getattr(settings.triage, "whitelist_vip_senders", []):
-            if vip.lower() in sender.lower():
-                if human_mode:
-                    logger.info("VIP hit: Sender '%s' is a whitelisted VIP. Bypassing Level 0 and Level 1 directly to Level 2!", sender)
-                is_vip = True
-                break
-                
-        if is_vip:
+        if engine.is_vip_sender(sender):
+            if human_mode:
+                logger.info("VIP hit: Sender '%s' is a whitelisted VIP. Bypassing Level 0 and Level 1 directly to Level 2!", sender)
             # Skip Level 0 & 1, go straight to fetch body and Level 2 summary
             full_id = email["id"]
             full_body = client_source.fetch_full_body(full_id)

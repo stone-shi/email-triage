@@ -22,8 +22,11 @@ test_configurations:
   - name: "baseline_gemini_flash_lite"
     triage_model: "gemini/gemini-3.1-flash-lite-preview"
     summary_model: "gemini/gemini-3.1-flash-lite-preview"
+  - name: "baseline_deepseek_pro"
+    triage_model: "deepseek/deepseek-v4-pro"
+    summary_model: "deepseek/deepseek-v4-pro"
 download_count: 100
 judge_model: "gemini/gemini-3.1-flash-lite-preview"
 level_0_judge_model: "deepseek/deepseek-v4-flash"
-baseline_configuration_name: "baseline_gemini_flash_lite"
+baseline_configuration_name: "baseline_deepseek_pro"
 log_level: "INFO"

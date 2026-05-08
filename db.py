@@ -68,6 +68,12 @@ class EmailDB:
                         timestamp TEXT NOT NULL
                     )
                 """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS sync_state (
+                        account TEXT PRIMARY KEY,
+                        checkpoint_val TEXT NOT NULL
+                    )
+                """)
                 conn.commit()
             logger.info("SQLite Database initialized at %s", self.db_path)
         except Exception as e:
@@ -103,6 +109,28 @@ class EmailDB:
         except Exception as e:
             logger.error("Error fetching cached record details: %s", e)
             return None
+
+    def get_sync_checkpoint(self, account: str) -> Optional[str]:
+        """Retrieve the last stored delta synchronization checkpoint token for an account."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT checkpoint_val FROM sync_state WHERE account = ?", (account,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            logger.error("Error fetching sync checkpoint for %s: %s", account, e)
+            return None
+
+    def save_sync_checkpoint(self, account: str, val: str) -> None:
+        """Persist the latest delta synchronization checkpoint token for an account."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT OR REPLACE INTO sync_state (account, checkpoint_val) VALUES (?, ?)", (account, str(val)))
+                conn.commit()
+        except Exception as e:
+            logger.error("Error saving sync checkpoint for %s: %s", account, e)
 
     def save_triage_result(
         self,

@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -124,13 +124,11 @@ class GmailClient:
             for msg in messages:
                 msg_id = msg['id']
                 try:
-                    # Fetch metadata only (headers + snippet) to minimize token usage
                     msg_meta = self.service.users().messages().get(
                         userId='me', id=msg_id, format='metadata',
                         metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
                     ).execute()
 
-                    # Parse headers into a clean dictionary
                     headers = msg_meta.get('payload', {}).get('headers', [])
                     header_dict = {h['name']: h['value'] for h in headers}
 

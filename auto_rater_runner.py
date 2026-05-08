@@ -110,6 +110,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             "reason": "Passed static filter",
             "summary": None,
             "score": 1.0,
+            "tag": "notification",
             "model_used_triage": triage_model,
             "model_used_summary": summary_model,
             "level_1_duration_sec": 0.0,
@@ -132,6 +133,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             logger.info("VIP hit: Sender '%s' is a whitelisted VIP. Bypassing Level 0 and Level 1 directly to Level 2!", sender)
             metrics["triage_level"] = 2
             metrics["reason"] = "VIP Sender Direct Escalation"
+            metrics["tag"] = "vip"
             
             if not full_body or len(full_body.strip()) < 10:
                 metrics["summary"] = "No substantive content to summarize."
@@ -161,6 +163,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                     
                     metrics["summary"] = result_dict.get("summary", "")
                     metrics["score"] = result_dict.get("confidence_score", 1.0)
+                    metrics["tag"] = result_dict.get("tag", "vip")
                 except Exception as e:
                     logger.error("Level 2 VIP summary failed for email %s: %s", msg_id, e)
                     metrics["summary"] = f"Level 2 summarization error: {str(e)}"
@@ -179,6 +182,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             l0_processed += 1
             metrics["triage_level"] = 0
             metrics["reason"] = l0_reason
+            metrics["tag"] = "low"
             
             # Use judge_model to verify if the Level 0 filter was actually correct
             l0_audit_prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
@@ -224,10 +228,11 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         if max_items is not None and l1_processed >= max_items:
             continue
         l1_processed += 1
-        l1_is_important, reason, score, l1_metrics = engine.run_level_1_classification(sender, subject, snippet, model_name=triage_model)
+        l1_is_important, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet, model_name=triage_model)
         
         metrics["reason"] = reason
         metrics["score"] = score
+        metrics["tag"] = l1_tag
         metrics["triage_level"] = 1
         metrics["level_1_duration_sec"] = l1_metrics["duration_sec"]
         metrics["level_1_prompt_tokens"] = l1_metrics["prompt_tokens"]
@@ -249,7 +254,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 if not full_body or len(full_body.strip()) < 10:
                     metrics["summary"] = "No substantive content to summarize."
                 else:
-                    summary, summary_score, l2_metrics = engine.run_level_2_summarization(subject, full_body, model_name=summary_model)
+                    summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body, model_name=summary_model)
                     
                     # Check for endpoint failures
                     if "Failed to generate proxy summary due to error" in summary:
@@ -258,6 +263,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                         
                     metrics["summary"] = summary
                     metrics["score"] = summary_score
+                    metrics["tag"] = l2_tag
                     metrics["level_2_duration_sec"] = l2_metrics["duration_sec"]
                     metrics["level_2_prompt_tokens"] = l2_metrics["prompt_tokens"]
                     metrics["level_2_completion_tokens"] = l2_metrics["completion_tokens"]

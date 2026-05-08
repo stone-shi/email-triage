@@ -48,11 +48,18 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
         l1_unimportant = sum(1 for r in data["results"] if r["triage_level"] == 1)
         important = sum(1 for r in data["results"] if r["triage_level"] == 2)
         
+        tags_dist = {}
+        for r in data["results"]:
+            t = r.get("tag", "un-tagged")
+            tags_dist[t] = tags_dist.get(t, 0) + 1
+        tag_dist_str = ", ".join(f"{k}: {v}" for k, v in sorted(tags_dist.items()))
+        
         report_lines.append(f"### 🔍 Configuration: `{name}`")
         report_lines.append(f"- **Total Scanned Envelopes**: {total}")
         report_lines.append(f"- **Level 0 Static Noise Intercepted**: {l0_filtered} ({l0_filtered/total*100:.1f}%)")
         report_lines.append(f"- **Level 1 Low-Cost Low Importance Filtered**: {l1_unimportant} ({l1_unimportant/total*100:.1f}%)")
         report_lines.append(f"- **Escalated Critical/Important Emails**: {important} ({important/total*100:.1f}%)")
+        report_lines.append(f"- **Assigned Tag Distribution**: {tag_dist_str}")
         report_lines.append("")
         
     # Benchmark Alignment Analysis using the gold baseline configuration if present
@@ -101,16 +108,23 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
     if platinum_name in configs_data and len(configs_data) > 1:
         report_lines.append("## 💎 Human Platinum Alignment Analytics (Gold Standard)")
         plat_results = {r["message_id"]: (r["triage_level"] == 2) for r in configs_data[platinum_name]["results"] if r["triage_level"] != 0}
+        plat_tags = {r["message_id"]: r.get("tag", "un-tagged") for r in configs_data[platinum_name]["results"]}
         
         for name, data in configs_data.items():
             if name == platinum_name:
                 continue
             
             tp, fp, fn, tn = 0, 0, 0, 0
+            tag_matches, tag_total = 0, 0
             for r in data["results"]:
+                msg_id = r["message_id"]
+                if msg_id in plat_tags and plat_tags[msg_id] != "un-tagged":
+                    tag_total += 1
+                    if r.get("tag") == plat_tags[msg_id]:
+                        tag_matches += 1
+                        
                 if r["triage_level"] == 0:
                     continue
-                msg_id = r["message_id"]
                 if msg_id not in plat_results:
                     continue
                     
@@ -130,6 +144,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0
             f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+            tag_acc = (tag_matches / tag_total) * 100 if tag_total > 0 else 0.0
             
             report_lines.append(f"### 💎 `{name}` alignment against human `{platinum_name}`:")
             report_lines.append(f"- **Relative Classification Accuracy**: {accuracy*100:.1f}%")
@@ -137,6 +152,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
             report_lines.append(f"- **Relative Recall**: {recall*100:.1f}%")
             report_lines.append(f"- **Relative F1 Score Balance Metric**: {f1:.3f}")
             report_lines.append(f"- **Confusion Matrix Counts**: [True Important: {tp}, False Important: {fp}, False Noise: {fn}, True Noise: {tn}]")
+            report_lines.append(f"- **Tag Matching Alignment Accuracy**: {tag_acc:.1f}% ({tag_matches}/{tag_total})")
             report_lines.append("")
 
     return "\n".join(report_lines)

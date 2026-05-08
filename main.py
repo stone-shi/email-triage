@@ -47,12 +47,12 @@ def process_account_emails(
             # Skip Level 0 & 1, go straight to fetch body and Level 2 summary
             full_id = email["id"]
             full_body = client_source.fetch_full_body(full_id)
-            summary, summary_score = engine.run_level_2_summarization(subject, full_body)
+            summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
             
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str,
                 level_0_status="passed", level_1_status="important", level_2_summary=summary,
-                triage_level=2
+                triage_level=2, tag="vip"
             )
             
             run_results.append({
@@ -64,7 +64,8 @@ def process_account_emails(
                 "date": date_str,
                 "reason": "VIP Sender Direct Escalation",
                 "summary": summary,
-                "score": summary_score
+                "score": summary_score,
+                "tag": "vip"
             })
             stats["important_identified"] += 1
             
@@ -75,7 +76,7 @@ def process_account_emails(
         # 2. Level 0 Static Regex Filter
         is_noise, l0_reason = engine.run_level_0_static(sender, subject)
         if is_noise:
-            db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="filtered", triage_level=0)
+            db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="filtered", triage_level=0, tag="low")
             if human_mode:
                 EmailNotifier.print_level_0_hit(msg_id, account, subject, l0_reason)
             
@@ -83,8 +84,12 @@ def process_account_emails(
                 "triage_level": 0,
                 "message_id": msg_id,
                 "account": account,
+                "sender": sender,
                 "subject": subject,
-                "reason": l0_reason
+                "date": date_str,
+                "reason": l0_reason,
+                "score": 0.0,
+                "tag": "low"
             })
             stats["level_0_filtered"] += 1
             continue
@@ -92,7 +97,7 @@ def process_account_emails(
         db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="passed")
 
         # 3. Level 1 LLM Binary Triage
-        is_important, reason, score, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
+        is_important, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
         
         # Ambiguity Escalation Layer
         from config import settings
@@ -101,7 +106,7 @@ def process_account_emails(
                 logger.info("Low confidence score (%s) from fast triage model. Escalating email to premium model...", score)
             full_id = email["id"]
             full_body = client_source.fetch_full_body(full_id)
-            is_important, reason, score = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
+            is_important, reason, score, l1_tag = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
             reason = f"[Premium Escalated] {reason}"
         
         if not is_important:
@@ -112,7 +117,7 @@ def process_account_emails(
                 level_1_duration_sec=l1_metrics["duration_sec"],
                 level_1_prompt_tokens=l1_metrics["prompt_tokens"],
                 level_1_completion_tokens=l1_metrics["completion_tokens"],
-                triage_level=1
+                triage_level=1, tag=l1_tag
             )
             if human_mode:
                 EmailNotifier.print_level_1_hit(msg_id, account, subject, reason, score)
@@ -121,9 +126,12 @@ def process_account_emails(
                 "triage_level": 1,
                 "message_id": msg_id,
                 "account": account,
+                "sender": sender,
                 "subject": subject,
+                "date": date_str,
                 "reason": reason,
-                "score": score
+                "score": score,
+                "tag": l1_tag
             })
             stats["level_1_unimportant"] += 1
             continue
@@ -135,7 +143,7 @@ def process_account_emails(
         full_id = email["id"]
         full_body = client_source.fetch_full_body(full_id)
         
-        summary, summary_score, l2_metrics = engine.run_level_2_summarization(subject, full_body)
+        summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
         
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
@@ -148,7 +156,7 @@ def process_account_emails(
             level_2_duration_sec=l2_metrics["duration_sec"],
             level_2_prompt_tokens=l2_metrics["prompt_tokens"],
             level_2_completion_tokens=l2_metrics["completion_tokens"],
-            triage_level=2
+            triage_level=2, tag=l2_tag
         )
         
         # 5. Real-time Notification Alerts (Only printed if human mode requested)
@@ -164,7 +172,8 @@ def process_account_emails(
             "date": date_str,
             "reason": reason,
             "summary": summary,
-            "score": summary_score
+            "score": summary_score,
+            "tag": l2_tag
         })
 
 def main() -> None:

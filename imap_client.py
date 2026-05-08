@@ -23,7 +23,7 @@ class IMAPClient:
             with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
                 logger.info("Successfully logged into IMAP account. Scanning UNSEEN messages...")
                 
-                messages = mailbox.fetch(AND(seen=False), headers_only=True)
+                messages = mailbox.fetch(AND(seen=False), headers_only=True, mark_seen=False)
                 
                 for msg in messages:
                     message_id = msg.headers.get('message-id', [f"imap_{msg.uid}"])[0]
@@ -53,7 +53,7 @@ class IMAPClient:
         try:
             logger.info("Escalating: Fetching full IMAP email payload for UID %s", uid)
             with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
-                for msg in mailbox.fetch(AND(uid=uid)):
+                for msg in mailbox.fetch(AND(uid=uid), mark_seen=False):
                     if msg.text:
                         return msg.text
                     elif msg.html:

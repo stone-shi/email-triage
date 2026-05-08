@@ -69,7 +69,6 @@ def process_account_emails(
             stats["important_identified"] += 1
             
             if human_mode:
-                from notifier import EmailNotifier
                 EmailNotifier.print_terminal_banner(subject, sender, "VIP Sender Direct Escalation", summary, summary_score)
             continue
 

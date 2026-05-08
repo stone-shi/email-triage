@@ -87,6 +87,23 @@ class EmailDB:
             logger.error("Error checking message_id cache: %s", e)
             return False
 
+    def get_cached_result(self, message_id: str) -> Optional[dict]:
+        """Retrieve a full cached email record as a dictionary by Message-ID."""
+        if not message_id:
+            return None
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM email_cache WHERE message_id = ?", (message_id,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+                return None
+        except Exception as e:
+            logger.error("Error fetching cached record details: %s", e)
+            return None
+
     def save_triage_result(
         self,
         message_id: str,

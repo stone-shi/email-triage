@@ -31,9 +31,38 @@ def process_account_emails(
         account = email["account"]
 
         # 1. Cache Layer Check
-        if db.is_processed(msg_id):
+        cached_row = db.get_cached_result(msg_id)
+        if cached_row:
+            t_level = cached_row.get("triage_level", 0)
+            c_reason = cached_row.get("reason") or "Cached result"
+            c_score = cached_row.get("score", 0.0) if cached_row.get("score") is not None else 0.0
+            c_summary = cached_row.get("level_2_summary")
+            c_tag = cached_row.get("tag") or ("low" if t_level == 0 else "notification")
+            
             if human_mode:
-                logger.info("Cache match: Skipping already processed Message-ID: %s", msg_id)
+                logger.info("Cache match: Reusing existing triage results for Message-ID: %s (Level: %s)", msg_id, t_level)
+                if t_level == 0:
+                    EmailNotifier.print_level_0_hit(msg_id, account, subject, c_reason)
+                elif t_level == 1:
+                    EmailNotifier.print_level_1_hit(msg_id, account, subject, c_reason, c_score)
+                elif t_level == 2:
+                    EmailNotifier.print_terminal_banner(subject, sender, c_reason, c_summary or "", c_score)
+            
+            res_obj = {
+                "triage_level": t_level,
+                "message_id": msg_id,
+                "account": account,
+                "sender": sender,
+                "subject": subject,
+                "date": date_str,
+                "reason": c_reason,
+                "score": c_score,
+                "tag": c_tag
+            }
+            if t_level == 2:
+                res_obj["summary"] = c_summary
+                
+            run_results.append(res_obj)
             stats["cached_skipped"] += 1
             continue
 

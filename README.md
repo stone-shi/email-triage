@@ -85,7 +85,14 @@ Parses incoming RFC/ISO envelope dates and filters processing strictly to unread
 ./triage.sh --human --days 3
 ```
 
-### 6. Authentication & Headless Flows
+### 6. LLM Agent Optimization Arguments
+Designed specifically to minimize context window token consumption when called programmatically by autonomous agents:
+- **`--level <n>`**: Filters output to emit only JSON objects matching a specific triage level threshold or higher (e.g., `--level 2` extracts only critical actionable briefs).
+- **`--compact`**: Emits a heavily minified JSON schema (`mid`, `lvl`, `tag`, `sum`) dropping verbose fields like exact timestamps or justification strings.
+- **`--skip <n>` / `--limit <n>`**: Enforces strict pagination offset slicing to process huge backlogs incrementally.
+- **`--output <path>`**: Writes the full verbose JSON array directly to disk while emitting only a lightweight pointer summary to `stdout` (e.g., `{"status": "success", "total_returned": 120, "file_uri": "..."}`).
+
+### 7. Authentication & Headless Flows
 - **`--auth`**: Purges active credentials (`token.json`) and re-opens the authorization loop.
 - **`--headless`**: Emits OAuth confirmation links exclusively via `sys.stderr` for headless SSH environments.
 

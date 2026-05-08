@@ -25,6 +25,10 @@ email-triage.sh
 - `--human`: Renders a rich premium terminal interface displaying visual layout frames, level stamps, classification tags, match reasons, and telemetry summary tables. **Note: This suppresses raw JSON dumps.**
 - `--max <n>`: Slices fetched unread email feeds to process only the top `n` items per ingestion source.
 - `--days <n>`: Enforces a UTC-aware date cutoff to process only unread emails received within the last `N` days.
+- `--level <n>`: Filters output to emit only items matching a specific triage level threshold or higher (e.g., `--level 2`).
+- `--compact`: Emits a heavily minified JSON schema (`mid`, `lvl`, `tag`, `sum`) optimized for LLM token context windows.
+- `--skip <n>` / `--limit <n>`: Enforces strict pagination offset slicing to process huge backlogs incrementally.
+- `--output <path>`: Writes the full verbose JSON array directly to disk while emitting only a lightweight pointer summary to `stdout`.
 - `--auth`: Purges existing OAuth persistent credentials (`token.json`) and forces a fresh authentication flow.
 - `--headless`: Enables SSH console authentication. Redirects links to `stderr` and reads the landing address string from `stdin`.
 

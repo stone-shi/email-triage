@@ -237,6 +237,11 @@ def main() -> None:
     parser.add_argument("--headless", action="store_true", help="Run OAuth authentication flow in headless/SSH console input mode")
     parser.add_argument("--max", type=int, help="Set maximum top n emails to read from EACH mail source")
     parser.add_argument("--days", type=int, help="Only output unread emails received within the last N days")
+    parser.add_argument("--level", type=int, help="Only output JSON objects matching this specific triage level or higher")
+    parser.add_argument("--compact", action="store_true", help="Emit a heavily minified JSON schema dropping non-essential fields to save tokens")
+    parser.add_argument("--skip", type=int, default=0, help="Skip the first N processed emails for pagination")
+    parser.add_argument("--limit", type=int, help="Limit the maximum number of output emails for pagination")
+    parser.add_argument("--output", type=str, help="Write full verbose JSON array directly to disk and emit only a lightweight pointer summary to stdout")
     args = parser.parse_args()
 
     # Populate global settings singleton fields from command line arguments
@@ -311,6 +316,32 @@ def main() -> None:
             logger.error("Error during IMAP pipeline run: %s", e)
 
     # --- Output Run Content ---
+    # Apply Option 1: Priority Level Filtering
+    if args.level is not None:
+        run_results = [r for r in run_results if r.get("triage_level", 0) >= args.level]
+        
+    # Apply Option 3: Pagination Slicing
+    if args.skip > 0:
+        run_results = run_results[args.skip:]
+    if args.limit is not None:
+        run_results = run_results[:args.limit]
+        
+    # Apply Option 2: Compact Schema Minification
+    if args.compact:
+        compact_results = []
+        for r in run_results:
+            c_obj = {
+                "mid": r.get("message_id"),
+                "lvl": r.get("triage_level"),
+                "tag": r.get("tag")
+            }
+            if r.get("triage_level") == 2:
+                c_obj["sum"] = r.get("summary")
+            compact_results.append(c_obj)
+        final_output_payload = compact_results
+    else:
+        final_output_payload = run_results
+
     if args.human:
         border = "=" * 60
         print(f"\n{border}\n📊 ENGINE RUN METRICS AND TELEMETRY SUMMARY\n{border}")
@@ -321,11 +352,32 @@ def main() -> None:
         print(f" Level 2 Summarized & Flagged:   {stats['important_identified']}")
         print(border)
     else:
-        # Standard execution JSON output mode ONLY: emit pure raw valid JSON without any extra text lines
-        if args.pretty:
-            print(json.dumps(run_results, indent=2, ensure_ascii=False))
+        # Apply Option 4: Output File Redirection + Metadata Pointer summary
+        if args.output:
+            from pathlib import Path
+            out_p = Path(args.output).resolve()
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_p, "w", encoding="utf-8") as f:
+                if args.pretty:
+                    json.dump(final_output_payload, f, indent=2, ensure_ascii=False)
+                else:
+                    json.dump(final_output_payload, f, ensure_ascii=False)
+            
+            pointer_summary = {
+                "status": "success",
+                "total_returned": len(final_output_payload),
+                "file_uri": str(out_p)
+            }
+            if args.pretty:
+                print(json.dumps(pointer_summary, indent=2, ensure_ascii=False))
+            else:
+                print(json.dumps(pointer_summary, ensure_ascii=False))
         else:
-            print(json.dumps(run_results, ensure_ascii=False))
+            # Standard execution JSON output mode ONLY: emit pure raw valid JSON without any extra text lines
+            if args.pretty:
+                print(json.dumps(final_output_payload, indent=2, ensure_ascii=False))
+            else:
+                print(json.dumps(final_output_payload, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()

@@ -4,6 +4,7 @@ auto_rater_data
 auto_rater_data/
 auto_rater_data_backup/
 *.db
+scratch/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

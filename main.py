@@ -174,6 +174,7 @@ def main() -> None:
     parser.add_argument("--pretty", action="store_true", help="Pretty print the final JSON result array")
     parser.add_argument("--auth", action="store_true", help="Force full interactive Gmail OAuth re-authorization flow")
     parser.add_argument("--headless", action="store_true", help="Run OAuth authentication flow in headless/SSH console input mode")
+    parser.add_argument("--max", type=int, help="Set maximum top n emails to read from EACH mail source")
     args = parser.parse_args()
 
     # Populate global settings singleton fields from command line arguments
@@ -223,6 +224,8 @@ def main() -> None:
             logger.info("Initializing Gmail Client Layer...")
         gmail = GmailClient()
         gmail_emails = gmail.fetch_unread_messages()
+        if args.max is not None:
+            gmail_emails = gmail_emails[:args.max]
         process_account_emails(gmail_emails, gmail, engine, db, stats, run_results, args.human)
     except Exception as e:
         if args.human:
@@ -234,6 +237,8 @@ def main() -> None:
             logger.info("Initializing IMAP Client Layer...")
         imap = IMAPClient()
         imap_emails = imap.fetch_unread_headers()
+        if args.max is not None:
+            imap_emails = imap_emails[:args.max]
         process_account_emails(imap_emails, imap, engine, db, stats, run_results, args.human)
     except Exception as e:
         if args.human:

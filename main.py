@@ -205,6 +205,29 @@ def process_account_emails(
             "tag": l2_tag
         })
 
+def filter_emails_by_days(emails: List[Dict[str, Any]], days: int) -> List[Dict[str, Any]]:
+    from datetime import datetime, timedelta, timezone
+    import email.utils
+    
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    filtered = []
+    
+    for e in emails:
+        d_str = e.get("date", "")
+        if not d_str:
+            filtered.append(e)
+            continue
+        try:
+            dt = email.utils.parsedate_to_datetime(d_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt >= cutoff:
+                filtered.append(e)
+        except Exception:
+            filtered.append(e)
+            
+    return filtered
+
 def main() -> None:
     # Handle command-line arguments
     parser = argparse.ArgumentParser(description="Optimized Email Triage & Summarization Engine")
@@ -213,6 +236,7 @@ def main() -> None:
     parser.add_argument("--auth", action="store_true", help="Force full interactive Gmail OAuth re-authorization flow")
     parser.add_argument("--headless", action="store_true", help="Run OAuth authentication flow in headless/SSH console input mode")
     parser.add_argument("--max", type=int, help="Set maximum top n emails to read from EACH mail source")
+    parser.add_argument("--days", type=int, help="Only output unread emails received within the last N days")
     args = parser.parse_args()
 
     # Populate global settings singleton fields from command line arguments
@@ -262,6 +286,8 @@ def main() -> None:
             logger.info("Initializing Gmail Client Layer...")
         gmail = GmailClient()
         gmail_emails = gmail.fetch_unread_messages()
+        if args.days is not None:
+            gmail_emails = filter_emails_by_days(gmail_emails, args.days)
         if args.max is not None:
             gmail_emails = gmail_emails[:args.max]
         process_account_emails(gmail_emails, gmail, engine, db, stats, run_results, args.human)
@@ -275,6 +301,8 @@ def main() -> None:
             logger.info("Initializing IMAP Client Layer...")
         imap = IMAPClient()
         imap_emails = imap.fetch_unread_headers()
+        if args.days is not None:
+            imap_emails = filter_emails_by_days(imap_emails, args.days)
         if args.max is not None:
             imap_emails = imap_emails[:args.max]
         process_account_emails(imap_emails, imap, engine, db, stats, run_results, args.human)

@@ -28,6 +28,9 @@ test_configurations:
   - name: "baseline_deepseek_pro"
     triage_model: "deepseek/deepseek-v4-pro"
     summary_model: "deepseek/deepseek-v4-pro"
+  - name: "qwen3.6-35b-a3b"
+    triage_model: "macwk/qwen3.6-35b-a3b"
+    summary_model: "macwk/qwen3.6-35b-a3b"
 download_count: 100
 judge_model: "deepseek/deepseek-v4-pro"
 level_0_judge_model: "deepseek/deepseek-v4-flash"

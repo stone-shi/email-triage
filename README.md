@@ -8,9 +8,9 @@ A token-efficient, multi-stage email ingestion and triage pipeline engineered in
 
 The engine leverages a multi-stage tiered triage architecture to eliminate redundant processing and minimize token expenditure:
 
-1. **Level 0 (Static Pre-Filter)**: Connects incoming headers against compiled keyword and sender blacklists (e.g., `no-reply`, `digest`). Intercepts noise immediately at **0 token cost** and logs exact match reasons.
-2. **Level 1 (Lightweight Triage)**: Packages the metadata envelope (From, Subject, Snippet) and requests an ultra-fast binary assessment (`is_important`) from **DeepSeek Flash** (`deepseek/deepseek-v4-flash`) using a strict Pydantic JSON response schema, returning a reason and confidence score.
-3. **Level 2 (Premium Summarization)**: If Level 1 signals high priority, the engine escalates to download the full message payload and invokes the premium **DeepSeek Pro** model (`deepseek/deepseek-v4-pro`) to render high-fidelity summaries, deadlines, and action items.
+1. **Level 0 (Static Pre-Filter)**: Connects incoming headers against compiled keyword and sender blacklists (e.g., `no-reply`, `digest`). Intercepts noise immediately at **0 token cost**, assigns the `"low"` classification tag, and logs exact match reasons.
+2. **Level 1 (Lightweight Triage)**: Packages the metadata envelope (From, Subject, Snippet) and requests an ultra-fast binary assessment (`is_important`) alongside a granular one-word lowercase classification `"tag"` (e.g., `promotion`, `notification`, `personal`, `vip`) from **DeepSeek Flash** (`deepseek/deepseek-v4-flash`) using a strict Pydantic JSON response schema.
+3. **Level 2 (Premium Summarization)**: If Level 1 signals high priority, the engine escalates to download the full message payload and invokes the premium **DeepSeek Pro** model (`deepseek/deepseek-v4-pro`) to render high-fidelity summaries, deadlines, action items, and context-aware tags.
 
 ---
 
@@ -51,7 +51,9 @@ EMAIL_TRIAGE_IMAP_PASSWORD=your_app_password_here
 
 ## 🚀 Usage & Execution Modes
 
-The engine can be easily invoked using the `./triage.sh` wrapper script, which automatically handles virtual environment activation. The orchestrator supports multiple distinct output formatting modes tailored for terminal reading or downstream tool ingestion (e.g., **OpenClaw**):
+The engine supports highly robust stateless unread metadata scanning. The persistent SQLite database acts as a **Real Cache Layer**: incoming unread emails that already exist in the cache are instantly retrieved, reconstructed into fully uniform dictionaries, and displayed/appended at **0 network/token cost**. IMAP fetching explicitly preserves unread states via `mark_seen=False`.
+
+The orchestrator entrypoint (`main.py` / `triage.sh`) supports multiple runtime arguments:
 
 ### 1. Standard Scripting Mode (Default)
 Outputs a **minified, raw single-line valid JSON array** representing all triaged items. Completely silences internal logs and text formatting to allow clean file-piping or automation interpretation:
@@ -66,51 +68,57 @@ Emits the standalone valid JSON result payload formatted with clean indentation 
 ```
 
 ### 3. Human Interactive Mode (`--human`)
-Completely strips raw JSON dumps and outputs a premium visual terminal interface. Displays text cards, specific triage level stamps, metrics logs, and telemetry summary charts:
+Completely strips raw JSON dumps and outputs a premium visual terminal interface. Displays text cards, specific triage level stamps, classification tags, metrics logs, and telemetry summary charts:
 ```bash
 ./triage.sh --human
 ```
 
-### 4. Forced Re-Authentication (`--auth`)
-Forces the application to purge its current persistent authorization credentials (`token.json`) and re-open the interactive browser callback process. Can be combined with any formatting mode:
+### 4. Ingestion Slice Limit (`--max <n>`)
+Restricts processing to only the top `n` unread emails retrieved from each configured ingestion source (Gmail + IMAP total capped at `2n`):
 ```bash
-./triage.sh --auth --human
+./triage.sh --pretty --max 5
 ```
 
-### 5. Headless Console Mode (`--headless`)
-Enables full interactive OAuth re-authorization inside remote server terminals or SSH sessions where automatic browser window loading is unsupported. Prints the required link and reads the pasted redirect URL landing address string from console input:
+### 5. Date Cutoff Filter (`--days <n>`)
+Parses incoming RFC/ISO envelope dates and filters processing strictly to unread emails received within the last `N` days:
 ```bash
-./triage.sh --auth --headless
+./triage.sh --human --days 3
 ```
+
+### 6. Authentication & Headless Flows
+- **`--auth`**: Purges active credentials (`token.json`) and re-opens the authorization loop.
+- **`--headless`**: Emits OAuth confirmation links exclusively via `sys.stderr` for headless SSH environments.
 
 ---
 
 ## 📊 Auto Rater: Testing & Benchmarking Suite
 
-The system incorporates a high-fidelity automated testing suite called **Auto Rater** to download offline datasets, execute side-by-side model benchmarking, and evaluate classification accuracy and summarization quality without affecting the production database.
-
-All generated result JSON streams and markdown analysis reports are neatly isolated inside the `auto_rater_data/` directory.
+The system incorporates a high-fidelity automated testing suite called **Auto Rater** to execute side-by-side model benchmarking, track tag distributions, and evaluate classification accuracy without affecting production data.
 
 ### Execution Workflow Tiers
 
-1. **Batch Ingestion Downloader**: Pulls a configurable volume of recent messages offline into plain text body schemas:
+1. **Batch Ingestion Downloader**: Pulls unread messages offline into plain text body schemas:
    ```bash
    ./venv/bin/python3 auto_rater_downloader.py
    ```
-2. **Isolated Benchmark Runner**: Loops over the paired configurations specified inside `auto_rater_config.yml`, executing all email triage steps with fine-grained prompt/completion token tallies and duration metrics:
+2. **Isolated Benchmark Runner**: Loops over configurations specified inside `auto_rater_config.yml`, executing all triage steps with token/tag tracking:
    ```bash
    ./venv/bin/python3 auto_rater_runner.py
    ```
-3. **Triage Classifier Rater**: Calculates precision, recall, relative accuracy, and balanced F1 scores relative to your gold standard reference baseline pair configuration:
+3. **Triage Classifier Rater**: Calculates precision, recall, relative accuracy, balanced F1 scores, and **Tag Matching Alignment Accuracy** relative to human gold standard baselines:
    ```bash
    ./venv/bin/python3 auto_rater_triage.py
    ```
-4. **LLM-as-a-Judge Summary Rater**: Uses a premium judge model to score executive summaries on a strict 1-10 scale for factuality, conciseness, and actionability:
+4. **LLM-as-a-Judge Summary Rater**: Uses a premium judge model to score executive summaries on a strict 1-10 scale:
    ```bash
    ./venv/bin/python3 auto_rater_summarizer.py
+   ```
+5. **Missing Tag Backfill Utility [NEW]**: Evaluates and backfills granular classification tags for older existing profile benchmarking datasets:
+   ```bash
+   ./venv/bin/python3 add_missing_tags.py --profile baseline_gemini_pro
    ```
 
 ---
 
 ## 🗄 Local Storage & Auditing
-- **`email_cache.db`**: Local SQLite database containing active `Message-ID` hashes to ensure duplicate emails are skipped instantly on subsequent scans, alongside token log counters auditing proxy usage histories.
+- **`email_cache.db`**: Local SQLite database containing active `Message-ID` hashes, real cache full row storage, classification tags, and auditing token logs.

@@ -318,7 +318,7 @@ def main() -> None:
     # --- Output Run Content ---
     # Apply Option 1: Priority Level Filtering
     if args.level is not None:
-        run_results = [r for r in run_results if r.get("triage_level", 0) >= args.level]
+        run_results = [r for r in run_results if (r.get("triage_level") if r.get("triage_level") is not None else 0) >= args.level]
         
     # Apply Option 3: Pagination Slicing
     if args.skip > 0:

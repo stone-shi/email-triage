@@ -1,6 +1,6 @@
 ---
 name: email-triage-engine
-description: Orchestrates robust stateless unread email ingestion from Gmail and IMAP, applies multi-stage triage (Level 0 regex, Level 1 binary classification, Level 2 premium summarization), tracks granular classification tags, reconstructs stored results via a Real Cache Layer, and outputs structured uniform JSON feeds. Use when you need to process unread emails, identify important messages, extract actions, or backfill dataset tags.
+description: Orchestrates robust stateless unread email ingestion from Gmail and IMAP, applies multi-stage triage (Level 0 regex, Level 1 ternary classification supporting dynamic downgrades, Level 2 premium summarization), tracks granular classification tags, reconstructs stored results via a Real Cache Layer, and outputs structured uniform JSON feeds. Use when you need to process unread emails, identify important messages, extract actions, or backfill dataset tags.
 ---
 
 # Email Triage Engine
@@ -38,9 +38,9 @@ email-triage.sh
 
 ### Triage Levels & Classification Tags
 
-1. **Level 0 (Filtered)**: Caught by static regex filters (noise/spam). Assigned `"tag": "low"`.
-2. **Level 1 (Unimportant)**: Evaluated by a fast LLM model. Populates `"tag"` with granular model-extracted categories (e.g., `promotion`, `notification`, `personal`).
-3. **Level 2 (Summarized)**: High priority escalated items. Includes an extra `"summary"` field highlighting explicit tasks and deadlines.
+1. **Level 0 (Filtered)**: Caught by static regex filters or dynamically downgraded by the Level 1 model.
+2. **Level 1 (Unimportant)**: Evaluated by the ternary LLM as standard ambient notifications/promotions. Populates `"tag"` with granular extracted categories (e.g., `promotion`, `notification`, `personal`).
+3. **Level 2 (Summarized)**: High priority actionable escalated items. Includes an extra `"summary"` field highlighting explicit tasks and deadlines.
 
 For a detailed breakdown of the full uniform JSON schema and real cache behavior, see [references/output_schema.md](references/output_schema.md).
 

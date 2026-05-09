@@ -19,9 +19,9 @@ The engine returns a fully uniform JSON array of objects representing all scanne
 ```
 
 ### Triage Level Specific Variations
-- **Level 0 (`triage_level: 0`)**: Intercepted by static noise pre-filters. `score` defaults to `0.0`, and `tag` is hardcoded to `"low"`.
-- **Level 1 (`triage_level: 1`)**: Classified as unimportant by fast binary triage. `score` reflects model confidence, and `tag` contains the model-generated classification string.
-- **Level 2 (`triage_level: 2`)**: High-priority escalated emails. Includes all standard keys plus an additional `"summary"` field containing a bulleted executive action brief.
+- **Level 0 (`triage_level: 0`)**: Intercepted by static noise pre-filters or **dynamically downgraded** by the Level 1 model. `score` reflects model confidence on downgrades (or `0.0` for regex hits), and `tag` captures the model's suggested string (or `"low"`).
+- **Level 1 (`triage_level: 1`)**: Classified as standard ambient notifications/promotions by fast ternary triage. `score` reflects model confidence, and `tag` contains the model-generated category.
+- **Level 2 (`triage_level: 2`)**: High-priority actionable/personal threads. Includes all standard keys plus an additional `"summary"` field containing a bulleted executive action brief.
 
 ```json
 {

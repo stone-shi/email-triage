@@ -88,7 +88,7 @@ Parses incoming RFC/ISO envelope dates and filters processing strictly to unread
 ### 6. LLM Agent Optimization Arguments
 Designed specifically to minimize context window token consumption when called programmatically by autonomous agents:
 - **`--level <n>`**: Filters output to emit only JSON objects matching a specific triage level threshold or higher (e.g., `--level 2` extracts only critical actionable briefs).
-- **`--compact`**: Emits a heavily minified JSON schema (`mid`, `lvl`, `tag`, `sum`) dropping verbose fields like exact timestamps or justification strings.
+- **`--compact`**: Emits a minified JSON schema (`mid`, `lvl`, `snd`, `sub`, `dt`, `tag`, `sum`) dropping verbose justification reason strings to save context window tokens.
 - **`--skip <n>` / `--limit <n>`**: Enforces strict pagination offset slicing to process huge backlogs incrementally.
 - **`--output <path>`**: Writes the full verbose JSON array directly to disk while emitting only a lightweight pointer summary to `stdout` (e.g., `{"status": "success", "total_returned": 120, "file_uri": "..."}`).
 

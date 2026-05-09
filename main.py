@@ -361,6 +361,9 @@ def main() -> None:
             c_obj = {
                 "mid": r.get("message_id"),
                 "lvl": r.get("triage_level"),
+                "snd": r.get("sender"),
+                "sub": r.get("subject"),
+                "dt": r.get("date"),
                 "tag": r.get("tag")
             }
             if r.get("triage_level") == 2:

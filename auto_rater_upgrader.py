@@ -129,7 +129,8 @@ def main() -> None:
                                 {"role": "system", "content": l2_system},
                                 {"role": "user", "content": l2_prompt}
                             ],
-                            "temperature": 0.2
+                            "temperature": 0.2,
+                            "include_reasoning": False
                         }
                         resp_l2 = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
                         resp_l2.raise_for_status()
@@ -177,7 +178,8 @@ def main() -> None:
                             {"role": "system", "content": l0_audit_system},
                             {"role": "user", "content": l0_audit_prompt}
                         ],
-                        "temperature": 0.0
+                        "temperature": 0.0,
+                        "include_reasoning": False
                     }
                     resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l0_payload)
                     resp.raise_for_status()
@@ -207,7 +209,8 @@ def main() -> None:
                             {"role": "system", "content": l1_system},
                             {"role": "user", "content": l1_prompt}
                         ],
-                        "temperature": 0.0
+                        "temperature": 0.0,
+                        "include_reasoning": False
                     }
                     resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l1_payload)
                     resp.raise_for_status()
@@ -238,7 +241,8 @@ def main() -> None:
                                 {"role": "system", "content": l2_system},
                                 {"role": "user", "content": l2_prompt}
                             ],
-                            "temperature": 0.2
+                            "temperature": 0.2,
+                            "include_reasoning": False
                         }
                         resp_l2 = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
                         resp_l2.raise_for_status()

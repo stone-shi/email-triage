@@ -164,6 +164,7 @@ class EmailTriageEngine:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.0,
+            "include_reasoning": False,
         }
         
         try:
@@ -249,6 +250,7 @@ class EmailTriageEngine:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2,
+            "include_reasoning": False,
         }
         
         start_time = time.time()
@@ -322,6 +324,7 @@ class EmailTriageEngine:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.0,
+            "include_reasoning": False,
         }
         
         try:

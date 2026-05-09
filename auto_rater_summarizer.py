@@ -158,7 +158,8 @@ def main() -> None:
                             {"role": "system", "content": judge_system},
                             {"role": "user", "content": judge_prompt}
                         ],
-                        "temperature": 0.0
+                        "temperature": 0.0,
+                        "include_reasoning": False
                     }
                     logger.info("Requesting quality score from judge for email: %s", subject)
                     resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=payload)

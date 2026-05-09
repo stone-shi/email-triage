@@ -105,7 +105,8 @@ def main() -> None:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content}
                 ],
-                "temperature": 0.0
+                "temperature": 0.0,
+                "include_reasoning": False
             }
             
             logger.info("Invoking %s clustering call for Level %d...", cluster_model, lvl)

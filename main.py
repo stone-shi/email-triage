@@ -125,8 +125,8 @@ def process_account_emails(
 
         db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="passed")
 
-        # 3. Level 1 LLM Binary Triage
-        is_important, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
+        # 3. Level 1 LLM Ternary Triage
+        suggested_level, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
         
         # Ambiguity Escalation Layer
         from config import settings
@@ -135,10 +135,38 @@ def process_account_emails(
                 logger.info("Low confidence score (%s) from fast triage model. Escalating email to premium model...", score)
             full_id = email["id"]
             full_body = client_source.fetch_full_body(full_id)
-            is_important, reason, score, l1_tag = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
+            suggested_level, reason, score, l1_tag = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
             reason = f"[Premium Escalated] {reason}"
         
-        if not is_important:
+        if suggested_level == 0:
+            # Model downgraded this item to Level 0 noise
+            db.save_triage_result(
+                msg_id, account, sender, subject, date_str, 
+                level_0_status="passed", level_1_status="downgraded",
+                reason=reason, score=score, model_used_triage=settings.triage_model,
+                level_1_duration_sec=l1_metrics["duration_sec"],
+                level_1_prompt_tokens=l1_metrics["prompt_tokens"],
+                level_1_completion_tokens=l1_metrics["completion_tokens"],
+                triage_level=0, tag=l1_tag
+            )
+            if human_mode:
+                logger.info("Level 1 model suggested downgrade to Level 0 noise for Message-ID: %s", msg_id)
+                EmailNotifier.print_level_0_hit(msg_id, account, subject, reason)
+            
+            run_results.append({
+                "triage_level": 0,
+                "message_id": msg_id,
+                "account": account,
+                "sender": sender,
+                "subject": subject,
+                "date": date_str,
+                "reason": reason,
+                "score": score,
+                "tag": l1_tag
+            })
+            stats["level_0_filtered"] += 1
+            continue
+        elif suggested_level == 1:
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str, 
                 level_0_status="passed", level_1_status="unimportant",

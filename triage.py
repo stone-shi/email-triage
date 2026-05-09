@@ -12,7 +12,7 @@ from db import EmailDB
 logger = logging.getLogger("email_triage.pipeline")
 
 class TriageDecision(BaseModel):
-    is_important: bool
+    suggested_level: int = Field(description="Suggested triage level: 0 (noise), 1 (notification/promotion), 2 (important)")
     reason: str
     confidence_score: float = Field(default=1.0, description="Confidence score from 0.0 to 1.0")
     tag: str = Field(default="notification", description="One word classification tag (e.g., promotion, notification, personal, vip)")
@@ -103,10 +103,10 @@ class EmailTriageEngine:
                 return match.group(1).strip()
         return text
 
-    def run_level_1_classification(self, sender: str, subject: str, snippet: str, model_name: Optional[str] = None) -> Tuple[bool, str, float, str, Dict[str, Any]]:
+    def run_level_1_classification(self, sender: str, subject: str, snippet: str, model_name: Optional[str] = None) -> Tuple[int, str, float, str, Dict[str, Any]]:
         """
-        Level 1 Triage: LiteLLM / DeepSeek flash binary classification with JSON validation.
-        Returns (is_important, reason, score, tag, metrics).
+        Level 1 Triage: LiteLLM / DeepSeek flash ternary classification with JSON validation.
+        Returns (suggested_level, reason, score, tag, metrics).
         """
         if not model_name:
             model_name = settings.triage_model
@@ -135,25 +135,29 @@ class EmailTriageEngine:
                 winning_score = winning_pred.get("score", 1.0)
                 
                 is_important = ("entailment" in winning_label and "not_" not in winning_label) or "important" in winning_label
+                suggested_level = 2 if is_important else 1
                 reason = f"TEI Classifier resolved winning label: '{winning_label}'"
                 tag = "notification" if not is_important else "personal"
                 
-                logger.info("Level 1 TEI Classifier result for '%s': Important=%s (Score: %s)", subject, is_important, winning_score)
+                logger.info("Level 1 TEI Classifier result for '%s': SuggestedLevel=%s (Score: %s)", subject, suggested_level, winning_score)
                 metrics["duration_sec"] = time.time() - start_time
-                return is_important, reason, winning_score, tag, metrics
+                return suggested_level, reason, winning_score, tag, metrics
             except Exception as tei_err:
-                logger.error("Level 1 TEI Classifier server prediction failed: %s. Falling back to safety True.", tei_err)
+                logger.error("Level 1 TEI Classifier server prediction failed: %s. Falling back to safety Level 2.", tei_err)
                 metrics["duration_sec"] = time.time() - start_time
-                return True, f"TEI server prediction error: {tei_err}", 1.0, "personal", metrics
+                return 2, f"TEI server prediction error: {tei_err}", 1.0, "personal", metrics
                 
         system_instruction = self.prompts.get("level_1_fast_triage", {}).get("system")
         if not system_instruction:
             system_instruction = (
-                "You are an expert executive assistant. Filter out automated updates, social notifications, "
-                "promotions, and newsletters. Mark as important only specific human conversations, business critical alerts, "
-                "or explicit requests directed to the recipient. You MUST return a valid JSON object containing exactly four fields: "
-                "'is_important' (boolean), 'reason' (string), 'confidence_score' (float from 0.0 to 1.0), and "
-                "'tag' (a one word lowercase tag, e.g., promotion, notification, personal, vip)."
+                "You are an expert executive assistant evaluating an email to suggest its triage level.\n"
+                "Output suggested_level as an integer:\n"
+                "0 - pure noise, random promotion, social media notification not directly addressed to user, notification requiring no action.\n"
+                "1 - notification worth reviewing, promotion addressing user (e.g., birthday credit, coupon, free credit).\n"
+                "2 - important, actionable, personal human conversation or critical alert.\n"
+                "You MUST return a valid JSON object containing exactly four fields: "
+                "'suggested_level' (integer: 0, 1, or 2), 'reason' (string explaining the level), 'confidence_score' (float from 0.0 to 1.0), and "
+                "'tag' (a one word lowercase tag, e.g., promotion, notification, personal, vip, low)."
             )
         
         url = f"{self.base_url}/chat/completions"
@@ -201,20 +205,20 @@ class EmailTriageEngine:
             
             # Validate dictionary format via Pydantic
             result = TriageDecision.model_validate(result_dict)
-            logger.info("Level 1 LiteLLM result for '%s': Important=%s (Reason: %s, Score: %s, Tag: %s)", subject, result.is_important, result.reason, result.confidence_score, result.tag)
+            logger.info("Level 1 LiteLLM result for '%s': SuggestedLevel=%s (Reason: %s, Score: %s, Tag: %s)", subject, result.suggested_level, result.reason, result.confidence_score, result.tag)
             
             metrics["duration_sec"] = time.time() - start_time
-            return result.is_important, result.reason, result.confidence_score, result.tag, metrics
+            return result.suggested_level, result.reason, result.confidence_score, result.tag, metrics
             
         except Exception as e:
-            logger.error("Level 1 LiteLLM proxy classification failed: %s. Defaulting to True for safety.", e)
+            logger.error("Level 1 LiteLLM proxy classification failed: %s. Defaulting to Level 2 for safety.", e)
             if 'content' in locals():
                 logger.error("Raw unparsed Level 1 response text was: \n%s", content)
             elif 'response' in locals():
                 logger.error("Raw proxy server response status body text was: \n%s", response.text)
                 
             metrics["duration_sec"] = time.time() - start_time
-            return True, f"Proxy error: {e}", 1.0, "personal", metrics
+            return 2, f"Proxy error: {e}", 1.0, "personal", metrics
 
     def run_level_2_summarization(self, subject: str, full_body: str, model_name: Optional[str] = None) -> Tuple[str, float, str, Dict[str, Any]]:
         """
@@ -299,7 +303,7 @@ class EmailTriageEngine:
             metrics["duration_sec"] = time.time() - start_time
             return f"Failed to generate proxy summary due to error: {e}", 1.0, "vip", metrics
 
-    def run_level_1_premium_escalation(self, sender: str, subject: str, snippet: str, full_body: str) -> Tuple[bool, str, float, str]:
+    def run_level_1_premium_escalation(self, sender: str, subject: str, snippet: str, full_body: str) -> Tuple[int, str, float, str]:
         """
         Secondary Premium Triage Escalation layer: Uses the premium summary model and full text body 
         to re-evaluate borderline/ambiguous classification choices definitively.
@@ -308,11 +312,13 @@ class EmailTriageEngine:
         system_instruction = self.prompts.get("level_1_premium_escalation", {}).get("system")
         if not system_instruction:
             system_instruction = (
-                "You are a premium AI operations auditor resolving an ambiguous email priority classification query. "
-                "Filter out automated noise, promotions, and notifications. Mark as important only actionable, high-priority human "
-                "conversations, business critical text streams, or direct requests requiring attention.\n"
+                "You are a premium AI operations auditor re-evaluating an ambiguous email triage level query.\n"
+                "Output suggested_level as an integer:\n"
+                "0 - pure noise, random promotion, social media notification not directly addressed to user, notification requiring no action.\n"
+                "1 - notification worth reviewing, promotion addressing user (e.g., birthday credit, coupon, free credit).\n"
+                "2 - important, actionable, personal human conversation or critical alert.\n"
                 "You MUST return a valid JSON object containing exactly four fields: "
-                "'is_important' (boolean), 'reason' (string), 'confidence_score' (float from 0.0 to 1.0), and "
+                "'suggested_level' (integer: 0, 1, or 2), 'reason' (string), 'confidence_score' (float from 0.0 to 1.0), and "
                 "'tag' (a one word lowercase tag, e.g., personal, vip, promotion, notification)."
             )
         
@@ -342,13 +348,13 @@ class EmailTriageEngine:
             result_dict = json.loads(json_content)
             
             result = TriageDecision.model_validate(result_dict)
-            logger.info("Premium Escalation result for '%s': Important=%s (Reason: %s, Score: %s, Tag: %s)", subject, result.is_important, result.reason, result.confidence_score, result.tag)
-            return result.is_important, result.reason, result.confidence_score, result.tag
+            logger.info("Premium Escalation result for '%s': SuggestedLevel=%s (Reason: %s, Score: %s, Tag: %s)", subject, result.suggested_level, result.reason, result.confidence_score, result.tag)
+            return result.suggested_level, result.reason, result.confidence_score, result.tag
             
         except Exception as e:
-            logger.error("Premium triage escalation failed: %s. Safely returning True.", e)
+            logger.error("Premium triage escalation failed: %s. Safely returning Level 2.", e)
             if 'content' in locals():
                 logger.error("Raw unparsed premium escalation response text was: \n%s", content)
             elif 'response' in locals():
                 logger.error("Raw proxy server response body text was: \n%s", response.text)
-            return True, f"Escalation error: {e}", 1.0, "personal"
+            return 2, f"Escalation error: {e}", 1.0, "personal"

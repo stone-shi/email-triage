@@ -86,11 +86,14 @@ def main() -> None:
             updated_count += 1
         elif t_level == 1:
             try:
-                is_imp, reason, score, tag_str, _ = engine.run_level_1_classification(sender, subject, snippet, model_name=triage_model)
+                suggested_level, reason, score, tag_str, _ = engine.run_level_1_classification(sender, subject, snippet, model_name=triage_model)
                 item["tag"] = tag_str
                 item["reason"] = reason
                 item["score"] = score
-                if is_imp:
+                if suggested_level == 0:
+                    logger.info("Downgrading item %s from Level 1 to Level 0 noise during backfill!", msg_id)
+                    item["triage_level"] = 0
+                elif suggested_level == 2:
                     logger.info("Escalating item %s from Level 1 to Level 2 during tag backfill evaluation!", msg_id)
                     item["triage_level"] = 2
                     if full_body and len(full_body.strip()) >= 10:
@@ -98,7 +101,9 @@ def main() -> None:
                         item["summary"] = summary
                         item["score"] = sum_score
                         item["tag"] = l2_tag
-                db.save_triage_result(msg_id, item.get("account", ""), sender, subject, date_str, level_0_status="passed", level_1_status="important" if item["triage_level"]==2 else "unimportant", level_2_summary=item.get("summary"), reason=item["reason"], score=item["score"], triage_level=item["triage_level"], tag=item["tag"])
+                
+                lvl_status = "downgraded" if item["triage_level"] == 0 else ("important" if item["triage_level"] == 2 else "unimportant")
+                db.save_triage_result(msg_id, item.get("account", ""), sender, subject, date_str, level_0_status="passed", level_1_status=lvl_status, level_2_summary=item.get("summary"), reason=item["reason"], score=item["score"], triage_level=item["triage_level"], tag=item["tag"])
                 updated_count += 1
                 time.sleep(0.5)
             except Exception as e:

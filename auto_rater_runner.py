@@ -230,12 +230,12 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         if max_items is not None and l1_processed >= max_items:
             continue
         l1_processed += 1
-        l1_is_important, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet, model_name=triage_model)
+        suggested_level, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet, model_name=triage_model)
         
         metrics["reason"] = reason
         metrics["score"] = score
         metrics["tag"] = l1_tag
-        metrics["triage_level"] = 1
+        metrics["triage_level"] = suggested_level
         metrics["level_1_duration_sec"] = l1_metrics["duration_sec"]
         metrics["level_1_prompt_tokens"] = l1_metrics["prompt_tokens"]
         metrics["level_1_completion_tokens"] = l1_metrics["completion_tokens"]
@@ -245,11 +245,11 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             logger.warning("Omitting email %s from results cache due to runtime LLM endpoint error.", msg_id)
             continue
             
-        # 3. Level 2 Premium Summary (only if Level 1 marked important)
-        if l1_is_important:
+        # 3. Level 2 Premium Summary (only if Level 1 suggested Level 2)
+        if suggested_level == 2:
             if max_items is not None and l2_processed >= max_items:
                 # Skip L2 summary to save time, keep as Level 1
-                pass
+                metrics["triage_level"] = 1
             else:
                 l2_processed += 1
                 metrics["triage_level"] = 2

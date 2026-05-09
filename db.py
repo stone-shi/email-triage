@@ -15,7 +15,7 @@ class EmailDB:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+        return sqlite3.connect(self.db_path, timeout=30.0)
 
     def _init_db(self) -> None:
         try:

@@ -36,6 +36,19 @@ email-triage.sh
 
 `email-triage.sh` outputs a fully uniform JSON array where each element represents an unread email processed or reconstructed by the engine. Every dictionary contains identical core keys: `triage_level`, `message_id`, `account`, `sender`, `subject`, `date`, `reason`, `score`, and `tag`.
 
+### Compact Schema Mapping (`--compact`)
+When called with `--compact` to conserve token overhead, key names are minified and verbose justification fields are stripped. The exact mapping to full mode fields is as follows:
+
+| Compact Key | Full Mode Key | Data Type | Description |
+| :--- | :--- | :--- | :--- |
+| **`mid`** | `message_id` | `str` | Unique RFC 2822 global identifier string. |
+| **`lvl`** | `triage_level` | `int` | Priority tier integer (`0`, `1`, or `2`). |
+| **`snd`** | `sender` | `str` | From envelope header string. |
+| **`sub`** | `subject` | `str` | Raw Subject line. |
+| **`dt`** | `date` | `str` | Arrival date string. |
+| **`tag`** | `tag` | `str` | One-word classification category. |
+| **`sum`** | `summary` | `str` | *(Level 2 Only)* Bulleted executive action brief. |
+
 ### Triage Levels & Classification Tags
 
 1. **Level 0 (Filtered)**: Caught by static regex filters or dynamically downgraded by the Level 1 model.

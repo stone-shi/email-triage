@@ -38,5 +38,18 @@ The engine returns a fully uniform JSON array of objects representing all scanne
 }
 ```
 
+## Compact Mode JSON Schema (`--compact`)
+Invoking `./triage.sh --compact` heavily minifies key strings and purges verbose justification reason descriptions to optimize context window consumption for LLM tools. The keys map exactly as follows:
+
+| Compact Key | Full Mode Key | Data Type | Description |
+| :--- | :--- | :--- | :--- |
+| **`mid`** | `message_id` | `str` | Unique RFC 2822 global identifier string. |
+| **`lvl`** | `triage_level` | `int` | Priority tier integer (`0`, `1`, or `2`). |
+| **`snd`** | `sender` | `str` | From envelope header string. |
+| **`sub`** | `subject` | `str` | Raw Subject line. |
+| **`dt`** | `date` | `str` | Arrival date string. |
+| **`tag`** | `tag` | `str` | One-word classification category. |
+| **`sum`** | `summary` | `str` | *(Level 2 Only)* Bulleted executive action brief. |
+
 ## Real Cache Reconstruction Behavior
 The engine treats the SQLite persistence database (`email_cache.db`) as a **Real Cache Layer**. If an incoming unread email matches an existing database entry, the system instantly reconstructs the full uniform dictionary from the stored row, logs the human notification card, and appends the object directly into the final JSON response feed at zero network/token cost.

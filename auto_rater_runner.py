@@ -71,6 +71,15 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     http_client = httpx.Client(timeout=1800.0)
     run_results: List[Dict[str, Any]] = []
     
+    # Dynamically override TEI settings for this specific configuration profile run
+    old_triage_type = getattr(settings.triage, "triage_type", "llm")
+    old_tei_url = getattr(settings.triage, "tei_url", "")
+    
+    if "triage_type" in config:
+        settings.triage.triage_type = config["triage_type"]
+    if "tei_url" in config:
+        settings.triage.tei_url = config["tei_url"]
+        
     # Initialize triage engine for static filtering logic (Level 0)
     dummy_db = EmailDB(db_path=workspace_dir / "email_cache.db")
     engine = EmailTriageEngine(dummy_db)
@@ -293,6 +302,10 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     output_file.parent.mkdir(exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as out_f:
         json.dump(output_payload, out_f, indent=2, ensure_ascii=False)
+        
+    # Restore old TEI settings to preserve clean state across profile loop iterations
+    settings.triage.triage_type = old_triage_type
+    settings.triage.tei_url = old_tei_url
         
     logger.info("Finished test run for '%s'. Results saved pretty to %s", config_name, output_file)
 

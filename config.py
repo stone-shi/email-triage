@@ -9,6 +9,9 @@ class TriageSettings(BaseModel):
     confidence_threshold: float = 0.8
     triage_type: str = "llm"
     tei_url: str = "http://10.100.0.50:8077/predict"
+    tei_router_enabled: bool = False
+    tei_noise_threshold: float = 0.999
+    tei_signal_threshold: float = 0.95
     whitelist_vip_senders: List[str] = []
     whitelist_domains: List[str] = []
     blacklist_keywords: List[str] = [
@@ -72,6 +75,12 @@ class Settings(BaseSettings):
                     self.triage.triage_type = triage_data["triage_type"]
                 if "tei_url" in triage_data:
                     self.triage.tei_url = triage_data["tei_url"]
+                if "tei_router_enabled" in triage_data:
+                    self.triage.tei_router_enabled = bool(triage_data["tei_router_enabled"])
+                if "tei_noise_threshold" in triage_data:
+                    self.triage.tei_noise_threshold = float(triage_data["tei_noise_threshold"])
+                if "tei_signal_threshold" in triage_data:
+                    self.triage.tei_signal_threshold = float(triage_data["tei_signal_threshold"])
                 if "whitelist_vip_senders" in triage_data:
                     self.triage.whitelist_vip_senders = triage_data["whitelist_vip_senders"]
                 if "whitelist_domains" in triage_data:

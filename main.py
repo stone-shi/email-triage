@@ -123,6 +123,65 @@ def process_account_emails(
             stats["level_0_filtered"] += 1
             continue
 
+        # 2.5 Level 0.5 TEI Semantic Router (Express Lane or Filter)
+        tei_override_level, tei_reason, tei_score = engine.run_tei_router(sender, subject, snippet)
+        
+        if tei_override_level == 0:
+            # TEI High-Confidence Noise Filter
+            db.save_triage_result(
+                msg_id, account, sender, subject, date_str, 
+                level_0_status="passed", level_1_status="tei_filtered",
+                reason=tei_reason, score=tei_score, triage_level=0, tag="low"
+            )
+            if human_mode:
+                EmailNotifier.print_level_0_hit(msg_id, account, subject, tei_reason)
+            
+            run_results.append({
+                "triage_level": 0,
+                "message_id": msg_id,
+                "account": account,
+                "sender": sender,
+                "subject": subject,
+                "date": date_str,
+                "reason": tei_reason,
+                "score": tei_score,
+                "tag": "low"
+            })
+            stats["level_0_filtered"] += 1
+            continue
+        elif tei_override_level == 2:
+            # TEI High-Confidence Signal Express Lane (Skip Level 1 LLM)
+            if human_mode:
+                logger.info("TEI Express Lane: Escalating email directly to Level 2 (Score: %s)", tei_score)
+            
+            full_id = email["id"]
+            full_body = client_source.fetch_full_body(full_id)
+            summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
+            
+            db.save_triage_result(
+                msg_id, account, sender, subject, date_str,
+                level_0_status="passed", level_1_status="tei_escalated", level_2_summary=summary,
+                reason=tei_reason, score=tei_score, triage_level=2, tag=l2_tag
+            )
+            
+            run_results.append({
+                "triage_level": 2,
+                "message_id": msg_id,
+                "account": account,
+                "sender": sender,
+                "subject": subject,
+                "date": date_str,
+                "reason": tei_reason,
+                "summary": summary,
+                "score": summary_score,
+                "tag": l2_tag
+            })
+            stats["important_identified"] += 1
+            
+            if human_mode:
+                EmailNotifier.print_terminal_banner(subject, sender, tei_reason, summary, summary_score)
+            continue
+
         db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="passed")
 
         # 3. Level 1 LLM Ternary Triage

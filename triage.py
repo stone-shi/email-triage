@@ -91,6 +91,46 @@ class EmailTriageEngine:
                 
         return False, None
 
+    def run_tei_router(self, sender: str, subject: str, snippet: str) -> Tuple[Optional[int], Optional[str], float]:
+        """
+        Level 0.5 TEI Router: Determines if an email should be filtered as noise, 
+        escalated to Level 2 (Summary), or passed to Level 1 (LLM).
+        Returns (suggested_level_override, reason, confidence).
+        """
+        if not settings.triage.tei_router_enabled:
+            return None, None, 1.0
+
+        tei_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
+        try:
+            logger.info("Level 0.5 TEI Router request sent to server: %s", settings.triage.tei_url)
+            response = self.http_client.post(settings.triage.tei_url, json={"inputs": tei_text})
+            response.raise_for_status()
+            predictions = response.json()
+            
+            winning_pred = max(predictions, key=lambda x: x.get("score", 0.0))
+            winning_label = winning_pred.get("label", "").lower()
+            winning_score = winning_pred.get("score", 1.0)
+            
+            # Logic 1: High-Confidence Signal -> Escalate to Level 2
+            is_important = ("entailment" in winning_label and "not_" not in winning_label) or "important" in winning_label
+            if is_important and winning_score >= settings.triage.tei_signal_threshold:
+                reason = f"TEI Signal Express Lane: high-confidence '{winning_label}'"
+                logger.info("Level 0.5 TEI Escalation: Signal detected with score %s", winning_score)
+                return 2, reason, winning_score
+
+            # Logic 2: High-Confidence Noise -> Filter to Level 0
+            is_noise = "contradiction" in winning_label or "unimportant" in winning_label
+            if is_noise and winning_score >= settings.triage.tei_noise_threshold:
+                reason = f"TEI Noise Filter: high-confidence '{winning_label}'"
+                logger.info("Level 0.5 TEI Filter: Noise detected with score %s", winning_score)
+                return 0, reason, winning_score
+            
+            # Logic 3: Ambiguous or Low Confidence -> Pass to Level 1 LLM
+            return None, f"TEI Neutral/Ambiguous: label '{winning_label}'", winning_score
+        except Exception as e:
+            logger.error("Level 0.5 TEI Router failed: %s", e)
+            return None, None, 0.0
+
     def _extract_json(self, text: str) -> str:
         """
         Extracts JSON content from text, stripping markdown code blocks if present.

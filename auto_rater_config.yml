@@ -4,6 +4,9 @@ test_configurations:
     triage_model: "local-tei-bge-nli"
     summary_model: "deepseek/deepseek-v4-flash"
     tei_url: "http://10.100.0.50:8077/predict"
+    tei_router_enabled: true
+    tei_signal_threshold: 0.85
+    tei_noise_threshold: 0.85
   - name: "gemma4e4b"
     triage_model: "homedesk/gemma-4-e4b"
     summary_model: "homedesk/gemma-4-e4b"

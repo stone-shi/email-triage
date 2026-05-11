@@ -74,11 +74,20 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     # Dynamically override TEI settings for this specific configuration profile run
     old_triage_type = getattr(settings.triage, "triage_type", "llm")
     old_tei_url = getattr(settings.triage, "tei_url", "")
+    old_tei_router_enabled = getattr(settings.triage, "tei_router_enabled", False)
+    old_tei_signal_threshold = getattr(settings.triage, "tei_signal_threshold", 0.8)
+    old_tei_noise_threshold = getattr(settings.triage, "tei_noise_threshold", 0.8)
     
     if "triage_type" in config:
         settings.triage.triage_type = config["triage_type"]
     if "tei_url" in config:
         settings.triage.tei_url = config["tei_url"]
+    if "tei_router_enabled" in config:
+        settings.triage.tei_router_enabled = config["tei_router_enabled"]
+    if "tei_signal_threshold" in config:
+        settings.triage.tei_signal_threshold = config["tei_signal_threshold"]
+    if "tei_noise_threshold" in config:
+        settings.triage.tei_noise_threshold = config["tei_noise_threshold"]
         
     # Initialize triage engine for static filtering logic (Level 0)
     dummy_db = EmailDB(db_path=workspace_dir / "email_cache.db")
@@ -229,6 +238,48 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 metrics["level_0_judge_reason"] = str(audit_err)
                 continue # Skip caching if judge audit failed
 
+            metrics["total_email_process_duration_sec"] = time.time() - email_start_time
+            new_emails_duration += metrics["total_email_process_duration_sec"]
+            processed_any_new = True
+            run_results.append(metrics)
+            continue
+            
+        # 1.5 Level 0.5 TEI Semantic Router (Express Lane or Filter)
+        tei_override_level, tei_reason, tei_score = engine.run_tei_router(sender, subject, snippet)
+        
+        if tei_override_level == 0:
+            if max_items is not None and l0_processed >= max_items:
+                continue
+            l0_processed += 1
+            metrics["triage_level"] = 0
+            metrics["reason"] = tei_reason
+            metrics["score"] = tei_score
+            metrics["tag"] = "low"
+            metrics["total_email_process_duration_sec"] = time.time() - email_start_time
+            new_emails_duration += metrics["total_email_process_duration_sec"]
+            processed_any_new = True
+            run_results.append(metrics)
+            continue
+        elif tei_override_level == 2:
+            if max_items is not None and l2_processed >= max_items:
+                metrics["triage_level"] = 1
+            else:
+                l2_processed += 1
+                metrics["triage_level"] = 2
+                metrics["reason"] = tei_reason
+                metrics["score"] = tei_score
+                
+                if not full_body or len(full_body.strip()) < 10:
+                    metrics["summary"] = "No substantive content to summarize."
+                else:
+                    summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body, model_name=summary_model)
+                    metrics["summary"] = summary
+                    metrics["score"] = summary_score
+                    metrics["tag"] = l2_tag
+                    metrics["level_2_duration_sec"] = l2_metrics["duration_sec"]
+                    metrics["level_2_prompt_tokens"] = l2_metrics["prompt_tokens"]
+                    metrics["level_2_completion_tokens"] = l2_metrics["completion_tokens"]
+                    
             metrics["total_email_process_duration_sec"] = time.time() - email_start_time
             new_emails_duration += metrics["total_email_process_duration_sec"]
             processed_any_new = True

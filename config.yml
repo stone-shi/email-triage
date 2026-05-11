@@ -8,8 +8,8 @@ triage:
   triage_type: "llm"
   tei_url: "http://10.100.0.50:8077/predict"
   tei_router_enabled: true
-  tei_noise_threshold: 0.999
-  tei_signal_threshold: 0.95
+  tei_noise_threshold: 0.6
+  tei_signal_threshold: 0.6
   whitelist_vip_senders:
     - "your_vip_email@gmail.com"
   whitelist_domains:

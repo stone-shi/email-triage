@@ -4,7 +4,7 @@ test_configurations:
     triage_model: "local-tei-bge-nli"
     summary_model: "deepseek/deepseek-v4-flash"
     tei_url: "http://10.100.0.50:8077/predict"
-    tei_router_enabled: true
+    tei_router_enabled: false
     tei_signal_threshold: 0.85
     tei_noise_threshold: 0.85
   - name: "gemma4e4b"
@@ -25,6 +25,20 @@ test_configurations:
   - name: "baseline_deepseek_flash"
     triage_model: "deepseek/deepseek-v4-flash"
     summary_model: "deepseek/deepseek-v4-flash"
+  - name: "baseline_deepseek_flash_routed"
+    triage_model: "deepseek/deepseek-v4-flash"
+    summary_model: "deepseek/deepseek-v4-flash"
+    tei_url: "http://10.100.0.50:8077/predict"
+    tei_router_enabled: true
+    tei_signal_threshold: 0.85
+    tei_noise_threshold: 0.85
+  - name: "baseline_deepseek_flash_routed_60"
+    triage_model: "deepseek/deepseek-v4-flash"
+    summary_model: "deepseek/deepseek-v4-flash"
+    tei_url: "http://10.100.0.50:8077/predict"
+    tei_router_enabled: true
+    tei_signal_threshold: 0.6
+    tei_noise_threshold: 0.6
   - name: "baseline_gemini_pro"
     triage_model: "gemini/gemini-3.1-pro-preview"
     summary_model: "gemini/gemini-3.1-pro-preview"

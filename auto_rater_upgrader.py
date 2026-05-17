@@ -15,7 +15,10 @@ def extract_json(text: str) -> str:
     if text.startswith("```"):
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
         if match:
-            return match.group(1).strip()
+            text = match.group(1).strip()
+    
+    # Robustness fix: handle unquoted tags from lazy models
+    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
     return text
 
 logging.basicConfig(

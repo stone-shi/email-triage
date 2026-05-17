@@ -134,13 +134,19 @@ class EmailTriageEngine:
     def _extract_json(self, text: str) -> str:
         """
         Extracts JSON content from text, stripping markdown code blocks if present.
+        Also attempts to fix common LLM formatting errors like unquoted string values.
         """
         text = text.strip()
         if text.startswith("```"):
             # Match ```json ... ``` or just ``` ... ```
             match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
             if match:
-                return match.group(1).strip()
+                text = match.group(1).strip()
+        
+        # Robustness fix: some smaller models (like Qwen 0.8B) return unquoted tags: "tag": promotion
+        # We look for "tag": followed by a single word that is NOT quoted and NOT a boolean/null
+        text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
+        
         return text
 
     def run_level_1_classification(self, sender: str, subject: str, snippet: str, model_name: Optional[str] = None) -> Tuple[int, str, float, str, Dict[str, Any]]:
@@ -197,7 +203,7 @@ class EmailTriageEngine:
                 "2 - important, actionable, personal human conversation or critical alert.\n"
                 "You MUST return a valid JSON object containing exactly four fields: "
                 "'suggested_level' (integer: 0, 1, or 2), 'reason' (string explaining the level), 'confidence_score' (float from 0.0 to 1.0), and "
-                "'tag' (a one word lowercase tag, e.g., promotion, notification, personal, vip, low)."
+                "'tag' (a one word lowercase tag, e.g., \"promotion\", \"notification\", \"personal\", \"vip\", \"low\")."
             )
         
         url = f"{self.base_url}/chat/completions"
@@ -283,7 +289,7 @@ class EmailTriageEngine:
             system_instruction = (
                 "Create clear, precise bulleted executive summaries. Be brief and highlight any requested task, conclusion, or deadline. "
                 "You MUST return a valid JSON object containing exactly three fields: 'summary' (string), 'confidence_score' (float from 0.0 to 1.0), "
-                "and 'tag' (a one word lowercase tag, e.g., personal, vip, update)."
+                "and 'tag' (a one word lowercase tag, e.g., \"personal\", \"vip\", \"update\")."
             )
         
         url = f"{self.base_url}/chat/completions"
@@ -359,7 +365,7 @@ class EmailTriageEngine:
                 "2 - important, actionable, personal human conversation or critical alert.\n"
                 "You MUST return a valid JSON object containing exactly four fields: "
                 "'suggested_level' (integer: 0, 1, or 2), 'reason' (string), 'confidence_score' (float from 0.0 to 1.0), and "
-                "'tag' (a one word lowercase tag, e.g., personal, vip, promotion, notification)."
+                "'tag' (a one word lowercase tag, e.g., \"personal\", \"vip\", \"promotion\", \"notification\")."
             )
         
         url = f"{self.base_url}/chat/completions"

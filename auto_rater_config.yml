@@ -27,6 +27,10 @@ test_configurations:
     triage_model: "homesrv/qwen3.5-2b"
     summary_model: "homesrv/qwen3.5-2b"
     tei_router_enabled: false
+  - name: "gemma-4-e2b-it-homesrv"
+    triage_model: "homesrv/gemma-4-e2b-it"
+    summary_model: "homesrv/gemma-4-e2b-it"
+    tei_router_enabled: false
   - name: "qwen3.5-9b"
     triage_model: "homedesk/qwen3.5-9b"
     summary_model: "homedesk/qwen3.5-9b"

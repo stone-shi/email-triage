@@ -8,6 +8,7 @@ from gmail_client import GmailClient
 from imap_client import IMAPClient
 from triage import EmailTriageEngine
 from notifier import EmailNotifier
+from config import settings
 
 logger = logging.getLogger("email_triage.main")
 
@@ -69,6 +70,12 @@ def process_account_emails(
         if human_mode:
             logger.info("Processing incoming email: '%s' from %s", subject, sender)
 
+        # Pipeline Telemetry variables initialization
+        tei_enabled = settings.triage.tei_router_enabled
+        tei_score_val = None
+        tei_decision = None
+        email_body = None
+
         # VIP Whitelist Override Layer -> Direct to Level 2
         if engine.is_vip_sender(sender):
             if human_mode:
@@ -76,12 +83,18 @@ def process_account_emails(
             # Skip Level 0 & 1, go straight to fetch body and Level 2 summary
             full_id = email["id"]
             full_body = client_source.fetch_full_body(full_id)
+            email_body = full_body
             summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
             
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str,
                 level_0_status="passed", level_1_status="important", level_2_summary=summary,
-                triage_level=2, tag="vip"
+                triage_level=2, tag="vip",
+                email_body=email_body,
+                tei_enabled=tei_enabled,
+                level_1_run=False,
+                level_2_run=True,
+                level_2_model=settings.summary_model
             )
             
             run_results.append({
@@ -105,7 +118,13 @@ def process_account_emails(
         # 2. Level 0 Static Regex Filter
         is_noise, l0_reason = engine.run_level_0_static(sender, subject)
         if is_noise:
-            db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="filtered", triage_level=0, tag="low")
+            db.save_triage_result(
+                msg_id, account, sender, subject, date_str, 
+                level_0_status="filtered", triage_level=0, tag="low",
+                tei_enabled=tei_enabled,
+                level_1_run=False,
+                level_2_run=False
+            )
             if human_mode:
                 EmailNotifier.print_level_0_hit(msg_id, account, subject, l0_reason)
             
@@ -125,13 +144,21 @@ def process_account_emails(
 
         # 2.5 Level 0.5 TEI Semantic Router (Express Lane or Filter)
         tei_override_level, tei_reason, tei_score = engine.run_tei_router(sender, subject, snippet)
+        if tei_enabled:
+            tei_score_val = tei_score
         
         if tei_override_level == 0:
             # TEI High-Confidence Noise Filter
+            tei_decision = "noise"
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str, 
                 level_0_status="passed", level_1_status="tei_filtered",
-                reason=tei_reason, score=tei_score, triage_level=0, tag="low"
+                reason=tei_reason, score=tei_score, triage_level=0, tag="low",
+                tei_enabled=tei_enabled,
+                tei_score=tei_score_val,
+                tei_decision=tei_decision,
+                level_1_run=False,
+                level_2_run=False
             )
             if human_mode:
                 EmailNotifier.print_level_0_hit(msg_id, account, subject, tei_reason)
@@ -151,17 +178,26 @@ def process_account_emails(
             continue
         elif tei_override_level == 2:
             # TEI High-Confidence Signal Express Lane (Skip Level 1 LLM)
+            tei_decision = "signal"
             if human_mode:
                 logger.info("TEI Express Lane: Escalating email directly to Level 2 (Score: %s)", tei_score)
             
             full_id = email["id"]
             full_body = client_source.fetch_full_body(full_id)
+            email_body = full_body
             summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
             
             db.save_triage_result(
                 msg_id, account, sender, subject, date_str,
                 level_0_status="passed", level_1_status="tei_escalated", level_2_summary=summary,
-                reason=tei_reason, score=tei_score, triage_level=2, tag=l2_tag
+                reason=tei_reason, score=tei_score, triage_level=2, tag=l2_tag,
+                email_body=email_body,
+                tei_enabled=tei_enabled,
+                tei_score=tei_score_val,
+                tei_decision=tei_decision,
+                level_1_run=False,
+                level_2_run=True,
+                level_2_model=settings.summary_model
             )
             
             run_results.append({
@@ -182,18 +218,27 @@ def process_account_emails(
                 EmailNotifier.print_terminal_banner(subject, sender, tei_reason, summary, summary_score)
             continue
 
-        db.save_triage_result(msg_id, account, sender, subject, date_str, level_0_status="passed")
+        tei_decision = "neutral"
+        db.save_triage_result(
+            msg_id, account, sender, subject, date_str, 
+            level_0_status="passed",
+            tei_enabled=tei_enabled,
+            tei_score=tei_score_val,
+            tei_decision=tei_decision,
+            level_1_run=False,
+            level_2_run=False
+        )
 
         # 3. Level 1 LLM Ternary Triage
         suggested_level, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
         
         # Ambiguity Escalation Layer
-        from config import settings
         if score < settings.triage.confidence_threshold:
             if human_mode:
                 logger.info("Low confidence score (%s) from fast triage model. Escalating email to premium model...", score)
             full_id = email["id"]
             full_body = client_source.fetch_full_body(full_id)
+            email_body = full_body
             suggested_level, reason, score, l1_tag = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
             reason = f"[Premium Escalated] {reason}"
         
@@ -206,7 +251,15 @@ def process_account_emails(
                 level_1_duration_sec=l1_metrics["duration_sec"],
                 level_1_prompt_tokens=l1_metrics["prompt_tokens"],
                 level_1_completion_tokens=l1_metrics["completion_tokens"],
-                triage_level=0, tag=l1_tag
+                triage_level=0, tag=l1_tag,
+                email_body=email_body,
+                tei_enabled=tei_enabled,
+                tei_score=tei_score_val,
+                tei_decision=tei_decision,
+                level_1_run=True,
+                level_1_model=settings.triage_model,
+                level_1_score=score,
+                level_2_run=False
             )
             if human_mode:
                 logger.info("Level 1 model suggested downgrade to Level 0 noise for Message-ID: %s", msg_id)
@@ -233,7 +286,15 @@ def process_account_emails(
                 level_1_duration_sec=l1_metrics["duration_sec"],
                 level_1_prompt_tokens=l1_metrics["prompt_tokens"],
                 level_1_completion_tokens=l1_metrics["completion_tokens"],
-                triage_level=1, tag=l1_tag
+                triage_level=1, tag=l1_tag,
+                email_body=email_body,
+                tei_enabled=tei_enabled,
+                tei_score=tei_score_val,
+                tei_decision=tei_decision,
+                level_1_run=True,
+                level_1_model=settings.triage_model,
+                level_1_score=score,
+                level_2_run=False
             )
             if human_mode:
                 EmailNotifier.print_level_1_hit(msg_id, account, subject, reason, score)
@@ -258,6 +319,7 @@ def process_account_emails(
         # Fetch full body payload now that email has passed Level 1 triage
         full_id = email["id"]
         full_body = client_source.fetch_full_body(full_id)
+        email_body = full_body
         
         summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
         
@@ -272,7 +334,16 @@ def process_account_emails(
             level_2_duration_sec=l2_metrics["duration_sec"],
             level_2_prompt_tokens=l2_metrics["prompt_tokens"],
             level_2_completion_tokens=l2_metrics["completion_tokens"],
-            triage_level=2, tag=l2_tag
+            triage_level=2, tag=l2_tag,
+            email_body=email_body,
+            tei_enabled=tei_enabled,
+            tei_score=tei_score_val,
+            tei_decision=tei_decision,
+            level_1_run=True,
+            level_1_model=settings.triage_model,
+            level_1_score=score,
+            level_2_run=True,
+            level_2_model=settings.summary_model
         )
         
         # 5. Real-time Notification Alerts (Only printed if human mode requested)

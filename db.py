@@ -47,7 +47,16 @@ class EmailDB:
                         level_0_judge_reason TEXT,
                         processed_at TEXT NOT NULL,
                         triage_level INTEGER,
-                        tag TEXT
+                        tag TEXT,
+                        email_body TEXT,
+                        tei_enabled INTEGER,
+                        tei_score REAL,
+                        tei_decision TEXT,
+                        level_1_run INTEGER,
+                        level_1_model TEXT,
+                        level_1_score REAL,
+                        level_2_run INTEGER,
+                        level_2_model TEXT
                     )
                 """)
                 try:
@@ -56,6 +65,42 @@ class EmailDB:
                     pass
                 try:
                     cursor.execute("ALTER TABLE email_cache ADD COLUMN tag TEXT")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN email_body TEXT")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN tei_enabled INTEGER")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN tei_score REAL")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN tei_decision TEXT")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN level_1_run INTEGER")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN level_1_model TEXT")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN level_1_score REAL")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN level_2_run INTEGER")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN level_2_model TEXT")
                 except Exception:
                     pass
                 # Create basic metrics/tokens log table
@@ -156,24 +201,43 @@ class EmailDB:
         level_0_judge_score: Optional[float] = None,
         level_0_judge_reason: Optional[str] = None,
         triage_level: Optional[int] = None,
-        tag: Optional[str] = None
+        tag: Optional[str] = None,
+        email_body: Optional[str] = None,
+        tei_enabled: Optional[bool] = None,
+        tei_score: Optional[float] = None,
+        tei_decision: Optional[str] = None,
+        level_1_run: Optional[bool] = None,
+        level_1_model: Optional[str] = None,
+        level_1_score: Optional[float] = None,
+        level_2_run: Optional[bool] = None,
+        level_2_model: Optional[str] = None
     ) -> None:
         """Save or update email triage results."""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 processed_at = datetime.utcnow().isoformat()
+                
+                # Convert boolean inputs to integer for SQLite compatibility
+                tei_enabled_int = 1 if tei_enabled is True else (0 if tei_enabled is False else None)
+                level_1_run_int = 1 if level_1_run is True else (0 if level_1_run is False else None)
+                level_2_run_int = 1 if level_2_run is True else (0 if level_2_run is False else None)
+                
                 cursor.execute("""
                     INSERT OR REPLACE INTO email_cache 
                     (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, 
                      reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec, 
                      level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens, 
-                     level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at, triage_level, tag)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at, triage_level, tag,
+                     email_body, tei_enabled, tei_score, tei_decision, level_1_run, level_1_model, level_1_score,
+                     level_2_run, level_2_model)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, 
                       reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec, 
                       level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens, 
-                      level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at, triage_level, tag))
+                      level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at, triage_level, tag,
+                      email_body, tei_enabled_int, tei_score, tei_decision, level_1_run_int, level_1_model, level_1_score,
+                      level_2_run_int, level_2_model))
                 conn.commit()
             logger.debug("Saved triage results for Message-ID: %s", message_id)
         except Exception as e:

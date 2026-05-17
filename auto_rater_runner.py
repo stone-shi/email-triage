@@ -28,6 +28,10 @@ def extract_json(text: str) -> str:
     
     # Robustness fix: handle unquoted tags from lazy models
     text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
+    
+    # Robustness fix: handle invalid escapes like \'
+    text = text.replace("\\'", "'")
+    
     return text
 
 def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False, max_items: int = None) -> None:

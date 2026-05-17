@@ -147,6 +147,9 @@ class EmailTriageEngine:
         # We look for "tag": followed by a single word that is NOT quoted and NOT a boolean/null
         text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
         
+        # Robustness fix: handle invalid escapes like \' which some models return
+        text = text.replace("\\'", "'")
+        
         return text
 
     def run_level_1_classification(self, sender: str, subject: str, snippet: str, model_name: Optional[str] = None) -> Tuple[int, str, float, str, Dict[str, Any]]:

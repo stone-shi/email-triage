@@ -13,7 +13,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger("auto_rater_triage")
 
-def analyze_results(files: List[Path], baseline_name: str) -> str:
+def get_summary_stats(data: Dict[str, Any], judge_cache: Dict[str, Any], judge_model: str, important_msg_ids: List[str] = None):
+    total_acc, total_con, total_act, count = 0, 0, 0, 0
+    triage_model = data.get("triage_model", "unknown")
+    
+    for r in data["results"]:
+        msg_id = r["message_id"]
+        if important_msg_ids is not None and msg_id not in important_msg_ids:
+            continue
+        
+        if r.get("summary"):
+            summary_text = r["summary"]
+            # Cache key: triage_model||judge_model||msg_id||summary
+            cache_key = f"{triage_model}||{judge_model}||{msg_id}||{summary_text}"
+            if cache_key in judge_cache:
+                scores = judge_cache[cache_key].get("scores", {})
+                total_acc += scores.get("accuracy", 0)
+                total_con += scores.get("conciseness", 0)
+                total_act += scores.get("actionability", 0)
+                count += 1
+                
+    if count == 0:
+        return None
+    return {
+        "accuracy": total_acc / count,
+        "conciseness": total_con / count,
+        "actionability": total_act / count,
+        "count": count
+    }
+
+def analyze_results(files: List[Path], baseline_name: str, judge_cache: Dict[str, Any] = None, judge_model: str = None) -> str:
     report_lines = []
     report_lines.append("# 📊 Auto Rater: Email Triage Classification Performance Report")
     report_lines.append(f"Analyzed {len(files)} test configurations.\n")
@@ -67,6 +96,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
         report_lines.append("## 📉 Benchmark Alignment Analytics (Relative to Baseline)")
         baseline_results = {r["message_id"]: (r["triage_level"] == 2) for r in configs_data[baseline_name]["results"] if r["triage_level"] != 0}
         
+        baseline_summary_rows = []
         for name, data in configs_data.items():
             if name == baseline_name:
                 continue
@@ -103,6 +133,15 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
             report_lines.append(f"- **Relative F1 Score Balance Metric**: {f1:.3f}")
             report_lines.append(f"- **Confusion Matrix Counts**: [True Important: {tp}, False Important: {fp}, False Noise: {fn}, True Noise: {tn}]")
             report_lines.append("")
+            
+            baseline_summary_rows.append(f"| {name} | {accuracy*100:.1f}% | {precision*100:.1f}% | {recall*100:.1f}% | {f1:.3f} | {tp} | {fp} | {fn} | {tn} |")
+
+        if baseline_summary_rows:
+            report_lines.append("### 📉 Triage Alignment Summary Table (vs Baseline)")
+            report_lines.append("| Configuration Name | Accuracy | Precision | Recall | F1 Score | TP | FP | FN | TN |")
+            report_lines.append("|---|---|---|---|---|---|---|---|---|")
+            report_lines.extend(baseline_summary_rows)
+            report_lines.append("")
 
     platinum_name = "baseline_platinum_human"
     if platinum_name in configs_data and len(configs_data) > 1:
@@ -110,6 +149,7 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
         plat_results = {r["message_id"]: (r["triage_level"] == 2) for r in configs_data[platinum_name]["results"] if r["triage_level"] != 0}
         plat_tags = {r["message_id"]: r.get("tag", "un-tagged") for r in configs_data[platinum_name]["results"]}
         
+        platinum_summary_rows = []
         for name, data in configs_data.items():
             if name == platinum_name:
                 continue
@@ -154,6 +194,43 @@ def analyze_results(files: List[Path], baseline_name: str) -> str:
             report_lines.append(f"- **Confusion Matrix Counts**: [True Important: {tp}, False Important: {fp}, False Noise: {fn}, True Noise: {tn}]")
             report_lines.append(f"- **Tag Matching Alignment Accuracy**: {tag_acc:.1f}% ({tag_matches}/{tag_total})")
             report_lines.append("")
+            
+            platinum_summary_rows.append(f"| {name} | {accuracy*100:.1f}% | {precision*100:.1f}% | {recall*100:.1f}% | {f1:.3f} | {tp} | {fp} | {fn} | {tn} |")
+
+        if platinum_summary_rows:
+            report_lines.append("### 💎 Triage Alignment Summary Table (vs Human Platinum)")
+            report_lines.append("| Configuration Name | Accuracy | Precision | Recall | F1 Score | TP | FP | FN | TN |")
+            report_lines.append("|---|---|---|---|---|---|---|---|---|")
+            report_lines.extend(platinum_summary_rows)
+            report_lines.append("")
+
+    if judge_cache:
+        report_lines.append("## 📝 Summarization Quality Comparison")
+        report_lines.append("| Configuration Name | Avg Accuracy | Avg Conciseness | Avg Actionability | Sample Count |")
+        report_lines.append("|---|---|---|---|---|")
+        
+        for name, data in configs_data.items():
+            stats = get_summary_stats(data, judge_cache, judge_model)
+            if stats:
+                report_lines.append(f"| {name} | {stats['accuracy']:.2f}/10 | {stats['conciseness']:.2f}/10 | {stats['actionability']:.2f}/10 | {stats['count']} |")
+            else:
+                report_lines.append(f"| {name} | N/A | N/A | N/A | 0 |")
+        
+        platinum_name = "baseline_platinum_human"
+        if platinum_name in configs_data:
+            human_important_ids = [r["message_id"] for r in configs_data[platinum_name]["results"] if r["triage_level"] == 2]
+            if human_important_ids:
+                report_lines.append("\n## 📝 Summarization Quality Comparison (Human-Important Gold Set)")
+                report_lines.append("| Configuration Name | Avg Accuracy | Avg Conciseness | Avg Actionability | Sample Count |")
+                report_lines.append("|---|---|---|---|---|")
+                
+                for name, data in configs_data.items():
+                    if name == platinum_name: continue
+                    stats = get_summary_stats(data, judge_cache, judge_model, important_msg_ids=human_important_ids)
+                    if stats:
+                        report_lines.append(f"| {name} | {stats['accuracy']:.2f}/10 | {stats['conciseness']:.2f}/10 | {stats['actionability']:.2f}/10 | {stats['count']} |")
+                    else:
+                        report_lines.append(f"| {name} | N/A | N/A | N/A | 0 |")
 
     return "\n".join(report_lines)
 
@@ -168,11 +245,13 @@ def main() -> None:
         
     config_path = workspace_dir / "auto_rater_config.yml"
     baseline_name = "production_deepseek_pair"
+    judge_model = "gemini/gemini-3.1-pro-preview" # Default
     if config_path.exists():
         try:
             with open(config_path, "r", encoding="utf-8") as cfg_f:
                 config_data = yaml.safe_load(cfg_f) or {}
             baseline_name = config_data.get("baseline_configuration_name", baseline_name)
+            judge_model = config_data.get("judge_model", judge_model)
             
             log_level = config_data.get("log_level", "INFO").upper()
             numeric_level = getattr(logging, log_level, logging.INFO)
@@ -193,7 +272,18 @@ def main() -> None:
         result_files = [f for f in result_files if f.name in [baseline_filename, compare_filename, platinum_filename]]
         logger.info("Targeted comparison active: comparing '%s' against baseline standard '%s'", args.compare, baseline_name)
 
-    report = analyze_results(result_files, baseline_name)
+    # Load summarizer cache
+    cache_path = data_dir / "auto_rater_summarizer_cache.json"
+    judge_cache = {}
+    if cache_path.exists():
+        try:
+            with open(cache_path, "r", encoding="utf-8") as cf:
+                judge_cache = json.load(cf)
+            logger.info("Loaded %d existing quality score cache records from disk.", len(judge_cache))
+        except Exception as e:
+            logger.warning("Could not load summarizer cache: %s", e)
+
+    report = analyze_results(result_files, baseline_name, judge_cache, judge_model)
     
     output_report_path = workspace_dir / "auto_rater_data" / "auto_rater_triage_report.md"
     try:

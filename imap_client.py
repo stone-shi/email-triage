@@ -6,12 +6,13 @@ from config import settings
 logger = logging.getLogger("email_triage.imap")
 
 class IMAPClient:
-    def __init__(self) -> None:
-        # Bind directly to flat root-level config keys
-        self.host = settings.imap_host
-        self.port = settings.imap_port
-        self.login_user = settings.imap_login
-        self.password = settings.imap_password
+    def __init__(self, settings_instance: Optional[Any] = None) -> None:
+        self.settings = settings_instance if settings_instance else settings
+        # Bind directly to flat config keys
+        self.host = self.settings.imap_host
+        self.port = self.settings.imap_port
+        self.login_user = self.settings.imap_login
+        self.password = self.settings.imap_password
 
     def fetch_unread_headers(self) -> List[Dict[str, Any]]:
         """

@@ -1,7 +1,7 @@
 import os
 import yaml
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -54,8 +54,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
     llm_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_LLM_API_KEY", ""))
 
-    def load_from_yaml(self) -> None:
-        yaml_path = self.workspace_dir / "config.yml"
+    def load_from_yaml(self, yaml_path: Optional[Path] = None) -> None:
+        if yaml_path is None:
+            yaml_path = self.workspace_dir / "config.yml"
         if yaml_path.exists():
             try:
                 with open(yaml_path, "r", encoding="utf-8") as f:
@@ -99,6 +100,37 @@ class Settings(BaseSettings):
                 # Fallback gracefully to default initialization strings on error
                 pass
 
-settings = Settings()
-# Execute YAML load immediately at module compilation startup phase
-settings.load_from_yaml()
+    @classmethod
+    def load_for_profile(cls, profile_name: str = "default") -> "Settings":
+        workspace_root = Path(__file__).parent.resolve()
+        
+        if not profile_name or profile_name == "default":
+            s = cls(_env_file=workspace_root / ".env")
+            s.workspace_dir = workspace_root
+            s.gmail_token_path = workspace_root / "token.json"
+            s.load_from_yaml(workspace_root / "config.yml")
+            return s
+            
+        profile_dir = workspace_root / "profiles" / profile_name
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Determine env file priority (profile env overrides root env)
+        profile_env = profile_dir / ".env"
+        env_file = profile_env if profile_env.exists() else workspace_root / ".env"
+        
+        s = cls(_env_file=env_file)
+        s.workspace_dir = profile_dir
+        s.gmail_token_path = profile_dir / "token.json"
+        
+        # Load global config first (inheritance base)
+        s.load_from_yaml(workspace_root / "config.yml")
+        
+        # Overwrite with profile-specific config if it exists
+        profile_yaml = profile_dir / "config.yml"
+        if profile_yaml.exists():
+            s.load_from_yaml(profile_yaml)
+            
+        return s
+
+settings = Settings.load_for_profile("default")
+

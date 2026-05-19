@@ -2,15 +2,16 @@ import sqlite3
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 from config import settings
 
 logger = logging.getLogger("email_triage.db")
 
 class EmailDB:
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Optional[Path] = None, settings_instance: Optional[Any] = None):
         if db_path is None:
-            db_path = settings.workspace_dir / "email_cache.db"
+            active_settings = settings_instance if settings_instance else settings
+            db_path = active_settings.workspace_dir / "email_cache.db"
         self.db_path = db_path
         self._init_db()
 

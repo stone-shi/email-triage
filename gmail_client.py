@@ -13,7 +13,8 @@ logger = logging.getLogger("email_triage.gmail")
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 class GmailClient:
-    def __init__(self) -> None:
+    def __init__(self, settings_instance: Optional[Any] = None) -> None:
+        self.settings = settings_instance if settings_instance else settings
         self.creds: Optional[Credentials] = None
         self.service = None
         self._authenticate()
@@ -21,9 +22,9 @@ class GmailClient:
     def _authenticate(self) -> None:
         """Handles OAuth 2.0 authentication flow and loads/persists tokens."""
         try:
-            if settings.gmail_token_path.exists():
+            if self.settings.gmail_token_path.exists():
                 self.creds = Credentials.from_authorized_user_file(
-                    str(settings.gmail_token_path), SCOPES
+                    str(self.settings.gmail_token_path), SCOPES
                 )
                 logger.info("Loaded Gmail credentials from persistent token file.")
 
@@ -41,18 +42,18 @@ class GmailClient:
                 
                 if trigger_oauth:
                     logger.info("No valid persistent token found or refresh failed. Initializing OAuth local server flow...")
-                    if not settings.gmail_credentials_path.exists():
+                    if not self.settings.gmail_credentials_path.exists():
                         raise FileNotFoundError(
-                            f"Google client secrets file not found at {settings.gmail_credentials_path}. "
+                            f"Google client secrets file not found at {self.settings.gmail_credentials_path}. "
                             f"Please make sure gog credentials exist."
                         )
                     import json
-                    with open(settings.gmail_credentials_path, 'r') as f:
+                    with open(self.settings.gmail_credentials_path, 'r') as f:
                         raw_secrets = json.load(f)
                     
                     if "installed" in raw_secrets or "web" in raw_secrets:
                         flow = InstalledAppFlow.from_client_secrets_file(
-                            str(settings.gmail_credentials_path), SCOPES
+                            str(self.settings.gmail_credentials_path), SCOPES
                         )
                     else:
                         client_config = {
@@ -66,7 +67,7 @@ class GmailClient:
                         }
                         flow = InstalledAppFlow.from_client_config(client_config, scopes=SCOPES)
                     import sys
-                    if settings.headless_mode:
+                    if self.settings.headless_mode:
                         flow.redirect_uri = "http://localhost"
                         auth_url, _ = flow.authorization_url(access_type='offline', prompt='select_account')
                         
@@ -91,9 +92,9 @@ class GmailClient:
                         )
                 
                 # Save the credentials for the next run
-                with open(settings.gmail_token_path, 'w') as token_file:
+                with open(self.settings.gmail_token_path, 'w') as token_file:
                     token_file.write(self.creds.to_json())
-                logger.info("Gmail token persisted successfully to %s", settings.gmail_token_path)
+                logger.info("Gmail token persisted successfully to %s", self.settings.gmail_token_path)
 
             self.service = build('gmail', 'v1', credentials=self.creds, cache_discovery=False)
             logger.info("Gmail API Service client successfully created.")
@@ -145,7 +146,7 @@ class GmailClient:
                         'subject': subject_str,
                         'date': date_str,
                         'snippet': snippet_str,
-                        'account': settings.gmail_account,
+                        'account': self.settings.gmail_account,
                         'raw_meta': msg_meta
                     })
                 except Exception as inner_e:

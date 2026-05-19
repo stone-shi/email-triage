@@ -23,11 +23,12 @@ class SummaryResult(BaseModel):
     tag: str = Field(default="vip", description="One word classification tag (e.g., promotion, notification, personal, vip)")
 
 class EmailTriageEngine:
-    def __init__(self, db: EmailDB) -> None:
+    def __init__(self, db: EmailDB, settings_instance: Optional[Any] = None) -> None:
         self.db = db
+        self.settings = settings_instance if settings_instance else settings
         # Set up the proxy endpoint URL and api key
-        self.base_url = settings.llm_base_url.rstrip('/')
-        self.api_key = settings.llm_api_key
+        self.base_url = self.settings.llm_base_url.rstrip('/')
+        self.api_key = self.settings.llm_api_key
         
         # Set up a reusable httpx Client with standard authorization headers
         self.headers = {
@@ -38,7 +39,7 @@ class EmailTriageEngine:
         
         # Load external prompts if present
         import yaml
-        prompts_path = settings.workspace_dir / "prompts.yml"
+        prompts_path = self.settings.workspace_dir / "prompts.yml"
         try:
             if prompts_path.exists():
                 with open(prompts_path, "r", encoding="utf-8") as f:
@@ -60,7 +61,7 @@ class EmailTriageEngine:
 
     def is_vip_sender(self, sender: str) -> bool:
         """Checks if the sender matches any entry in the VIP whitelist."""
-        for vip in getattr(settings.triage, "whitelist_vip_senders", []):
+        for vip in getattr(self.settings.triage, "whitelist_vip_senders", []):
             if vip.lower() in sender.lower():
                 return True
         return False
@@ -72,18 +73,18 @@ class EmailTriageEngine:
         """
         combined_text = f"{sender} {subject}".lower()
         
-        for domain in getattr(settings.triage, "whitelist_domains", []):
+        for domain in getattr(self.settings.triage, "whitelist_domains", []):
             if domain.lower() in sender.lower():
                 logger.info("Level 0 Whitelist hit: Sender domain '%s' is whitelisted. Bypassing noise filter.", domain)
                 return False, None
         
-        for kw in settings.triage.blacklist_keywords:
+        for kw in self.settings.triage.blacklist_keywords:
             if kw.lower() in combined_text:
                 reason = f"Static filter hit: noise keyword '{kw}' matched"
                 logger.info("Level 0 Filter hit: Found noise keyword '%s' in email.", kw)
                 return True, reason
                 
-        for pattern in settings.triage.blacklist_senders:
+        for pattern in self.settings.triage.blacklist_senders:
             if re.search(re.escape(pattern.lower()), sender.lower()):
                 reason = f"Static filter hit: sender pattern '{pattern}' matched"
                 logger.info("Level 0 Filter hit: Sender matches blacklisted pattern '%s'.", pattern)
@@ -97,13 +98,13 @@ class EmailTriageEngine:
         escalated to Level 2 (Summary), or passed to Level 1 (LLM).
         Returns (suggested_level_override, reason, confidence).
         """
-        if not settings.triage.tei_router_enabled:
+        if not self.settings.triage.tei_router_enabled:
             return None, None, 1.0
 
         tei_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
         try:
-            logger.info("Level 0.5 TEI Router request sent to server: %s", settings.triage.tei_url)
-            response = self.http_client.post(settings.triage.tei_url, json={"inputs": tei_text})
+            logger.info("Level 0.5 TEI Router request sent to server: %s", self.settings.triage.tei_url)
+            response = self.http_client.post(self.settings.triage.tei_url, json={"inputs": tei_text})
             response.raise_for_status()
             predictions = response.json()
             
@@ -113,14 +114,14 @@ class EmailTriageEngine:
             
             # Logic 1: High-Confidence Signal -> Escalate to Level 2
             is_important = ("entailment" in winning_label and "not_" not in winning_label) or "important" in winning_label
-            if is_important and winning_score >= settings.triage.tei_signal_threshold:
+            if is_important and winning_score >= self.settings.triage.tei_signal_threshold:
                 reason = f"TEI Signal Express Lane: high-confidence '{winning_label}'"
                 logger.info("Level 0.5 TEI Escalation: Signal detected with score %s", winning_score)
                 return 2, reason, winning_score
 
             # Logic 2: High-Confidence Noise -> Filter to Level 0
             is_noise = "contradiction" in winning_label or "unimportant" in winning_label
-            if is_noise and winning_score >= settings.triage.tei_noise_threshold:
+            if is_noise and winning_score >= self.settings.triage.tei_noise_threshold:
                 reason = f"TEI Noise Filter: high-confidence '{winning_label}'"
                 logger.info("Level 0.5 TEI Filter: Noise detected with score %s", winning_score)
                 return 0, reason, winning_score
@@ -158,7 +159,7 @@ class EmailTriageEngine:
         Returns (suggested_level, reason, score, tag, metrics).
         """
         if not model_name:
-            model_name = settings.triage_model
+            model_name = self.settings.triage_model
             
         prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
         
@@ -171,11 +172,11 @@ class EmailTriageEngine:
         start_time = time.time()
         
         # TEI Classifier Ingestion Pathway Switch
-        if getattr(settings.triage, "triage_type", "llm") == "tei":
+        if getattr(self.settings.triage, "triage_type", "llm") == "tei":
             tei_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
             try:
-                logger.info("Level 1 Triage request sent to TEI Sequence Classifier server: %s", settings.triage.tei_url)
-                response = self.http_client.post(settings.triage.tei_url, json={"inputs": tei_text})
+                logger.info("Level 1 Triage request sent to TEI Sequence Classifier server: %s", self.settings.triage.tei_url)
+                response = self.http_client.post(self.settings.triage.tei_url, json={"inputs": tei_text})
                 response.raise_for_status()
                 predictions = response.json()
                 
@@ -275,7 +276,7 @@ class EmailTriageEngine:
         Returns (summary, score, tag, metrics).
         """
         if not model_name:
-            model_name = settings.summary_model
+            model_name = self.settings.summary_model
             
         metrics = {
             "prompt_tokens": 0,
@@ -373,7 +374,7 @@ class EmailTriageEngine:
         
         url = f"{self.base_url}/chat/completions"
         payload = {
-            "model": settings.summary_model,
+            "model": self.settings.summary_model,
             "messages": [
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": prompt}
@@ -383,14 +384,14 @@ class EmailTriageEngine:
         }
         
         try:
-            logger.info("Ambiguity Triage Escalation sent to premium model: %s", settings.summary_model)
+            logger.info("Ambiguity Triage Escalation sent to premium model: %s", self.settings.summary_model)
             response = self.http_client.post(url, headers=self.headers, json=payload)
             response.raise_for_status()
             
             resp_json = response.json()
             usage = resp_json.get("usage", {})
             tokens_used = usage.get("total_tokens", self._estimate_tokens(prompt) + 40)
-            self.db.log_token_usage("premium_triage_escalation", settings.summary_model, tokens_used)
+            self.db.log_token_usage("premium_triage_escalation", self.settings.summary_model, tokens_used)
             
             content = resp_json["choices"][0]["message"]["content"]
             json_content = self._extract_json(content)

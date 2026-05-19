@@ -19,9 +19,11 @@ def process_account_emails(
     db: EmailDB,
     stats: Dict[str, int],
     run_results: List[Dict[str, Any]],
-    human_mode: bool
+    human_mode: bool,
+    settings_instance: Any
 ) -> None:
     """Process emails through the cache and triage tiers, dynamically outputting human logs or silent JSON accumulation."""
+    settings = settings_instance
     for email in emails:
         stats["total_scanned"] += 1
         msg_id = email["message_id"]
@@ -400,10 +402,12 @@ def main() -> None:
     parser.add_argument("--skip", type=int, default=0, help="Skip the first N processed emails for pagination")
     parser.add_argument("--limit", type=int, help="Limit the maximum number of output emails for pagination")
     parser.add_argument("--output", type=str, help="Write full verbose JSON array directly to disk and emit only a lightweight pointer summary to stdout")
+    parser.add_argument("--profile", type=str, default="default", help="Dynamic multi-tenant profile name directory under profiles/")
     args = parser.parse_args()
 
-    # Populate global settings singleton fields from command line arguments
-    from config import settings
+    # Populate dynamic profile configuration settings
+    from config import Settings
+    settings = Settings.load_for_profile(args.profile)
     settings.headless_mode = args.headless
 
     # Configure logging based on human_mode flag
@@ -422,8 +426,8 @@ def main() -> None:
         # Turn down logger library levels
         logging.getLogger("email_triage").setLevel(logging.CRITICAL)
 
-    db = EmailDB()
-    engine = EmailTriageEngine(db)
+    db = EmailDB(settings_instance=settings)
+    engine = EmailTriageEngine(db, settings_instance=settings)
     
     stats = {
         "total_scanned": 0,
@@ -447,13 +451,13 @@ def main() -> None:
                 
         if args.human:
             logger.info("Initializing Gmail Client Layer...")
-        gmail = GmailClient()
+        gmail = GmailClient(settings_instance=settings)
         gmail_emails = gmail.fetch_unread_messages()
         if args.days is not None:
             gmail_emails = filter_emails_by_days(gmail_emails, args.days)
         if args.max is not None:
             gmail_emails = gmail_emails[:args.max]
-        process_account_emails(gmail_emails, gmail, engine, db, stats, run_results, args.human)
+        process_account_emails(gmail_emails, gmail, engine, db, stats, run_results, args.human, settings_instance=settings)
     except Exception as e:
         if args.human:
             logger.error("Error during Gmail pipeline run: %s", e)
@@ -462,13 +466,13 @@ def main() -> None:
     try:
         if args.human:
             logger.info("Initializing IMAP Client Layer...")
-        imap = IMAPClient()
+        imap = IMAPClient(settings_instance=settings)
         imap_emails = imap.fetch_unread_headers()
         if args.days is not None:
             imap_emails = filter_emails_by_days(imap_emails, args.days)
         if args.max is not None:
             imap_emails = imap_emails[:args.max]
-        process_account_emails(imap_emails, imap, engine, db, stats, run_results, args.human)
+        process_account_emails(imap_emails, imap, engine, db, stats, run_results, args.human, settings_instance=settings)
     except Exception as e:
         if args.human:
             logger.error("Error during IMAP pipeline run: %s", e)

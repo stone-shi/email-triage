@@ -76,7 +76,7 @@ class Settings(BaseSettings):
             self.triage.tei_url = self.tei_url
         return self
 
-    def load_from_yaml(self, yaml_path: Optional[Path] = None) -> None:
+    def load_from_yaml(self, yaml_path: Optional[Path] = None, env_file: Optional[Path] = None) -> None:
         if yaml_path is None:
             yaml_path = self.workspace_dir / "config.yml"
         if yaml_path.exists():
@@ -84,45 +84,69 @@ class Settings(BaseSettings):
                 with open(yaml_path, "r", encoding="utf-8") as f:
                     yaml_data = yaml.safe_load(f) or {}
                 
+                # Identify all active environment variable keys (from os.environ and the .env file)
+                active_env_keys = set(os.environ.keys())
+                if env_file and env_file.exists():
+                    try:
+                        with open(env_file, "r", encoding="utf-8") as env_f:
+                            for line in env_f:
+                                line = line.strip()
+                                if line and not line.startswith("#") and "=" in line:
+                                    k, _ = line.split("=", 1)
+                                    active_env_keys.add(k.strip())
+                    except Exception:
+                        pass
+
+                def should_apply(field_env_name: str) -> bool:
+                    return field_env_name not in active_env_keys
+
                 # Map LLM section
                 llm_data = yaml_data.get("llm", {})
                 if "base_url" in llm_data:
-                    self.triage_base_url = llm_data["base_url"]
-                    self.summary_base_url = llm_data["base_url"]
-                if "triage_base_url" in llm_data: self.triage_base_url = llm_data["triage_base_url"]
-                if "summary_base_url" in llm_data: self.summary_base_url = llm_data["summary_base_url"]
-                if "triage_api_key" in llm_data: self.triage_api_key = llm_data["triage_api_key"]
-                if "summary_api_key" in llm_data: self.summary_api_key = llm_data["summary_api_key"]
-                if "triage_model" in llm_data: self.triage_model = llm_data["triage_model"]
-                if "summary_model" in llm_data: self.summary_model = llm_data["summary_model"]
+                    if should_apply("EMAIL_TRIAGE_TRIAGE_BASE_URL"):
+                        self.triage_base_url = llm_data["base_url"]
+                    if should_apply("EMAIL_TRIAGE_SUMMARY_BASE_URL"):
+                        self.summary_base_url = llm_data["base_url"]
+                if "triage_base_url" in llm_data and should_apply("EMAIL_TRIAGE_TRIAGE_BASE_URL"):
+                    self.triage_base_url = llm_data["triage_base_url"]
+                if "summary_base_url" in llm_data and should_apply("EMAIL_TRIAGE_SUMMARY_BASE_URL"):
+                    self.summary_base_url = llm_data["summary_base_url"]
+                if "triage_api_key" in llm_data and should_apply("EMAIL_TRIAGE_TRIAGE_API_KEY"):
+                    self.triage_api_key = llm_data["triage_api_key"]
+                if "summary_api_key" in llm_data and should_apply("EMAIL_TRIAGE_SUMMARY_API_KEY"):
+                    self.summary_api_key = llm_data["summary_api_key"]
+                if "triage_model" in llm_data and should_apply("EMAIL_TRIAGE_TRIAGE_MODEL"):
+                    self.triage_model = llm_data["triage_model"]
+                if "summary_model" in llm_data and should_apply("EMAIL_TRIAGE_SUMMARY_MODEL"):
+                    self.summary_model = llm_data["summary_model"]
                 
                 # Map Triage section
                 triage_data = yaml_data.get("triage", {})
-                if "confidence_threshold" in triage_data:
+                if "confidence_threshold" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__CONFIDENCE_THRESHOLD"):
                     self.triage.confidence_threshold = float(triage_data["confidence_threshold"])
-                if "triage_type" in triage_data:
+                if "triage_type" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TRIAGE_TYPE"):
                     self.triage.triage_type = triage_data["triage_type"]
-                if "tei_url" in triage_data:
+                if "tei_url" in triage_data and should_apply("EMAIL_TRIAGE_TEI_URL"):
                     self.triage.tei_url = triage_data["tei_url"]
                     self.tei_url = triage_data["tei_url"]
-                if "tei_router_enabled" in triage_data:
+                if "tei_router_enabled" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_ROUTER_ENABLED"):
                     self.triage.tei_router_enabled = bool(triage_data["tei_router_enabled"])
-                if "tei_noise_threshold" in triage_data:
+                if "tei_noise_threshold" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_NOISE_THRESHOLD"):
                     self.triage.tei_noise_threshold = float(triage_data["tei_noise_threshold"])
-                if "tei_signal_threshold" in triage_data:
+                if "tei_signal_threshold" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_SIGNAL_THRESHOLD"):
                     self.triage.tei_signal_threshold = float(triage_data["tei_signal_threshold"])
-                if "whitelist_vip_senders" in triage_data:
+                if "whitelist_vip_senders" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__WHITELIST_VIP_SENDERS"):
                     self.triage.whitelist_vip_senders = triage_data["whitelist_vip_senders"]
-                if "whitelist_domains" in triage_data:
+                if "whitelist_domains" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__WHITELIST_DOMAINS"):
                     self.triage.whitelist_domains = triage_data["whitelist_domains"]
-                if "blacklist_keywords" in triage_data:
+                if "blacklist_keywords" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__BLACKLIST_KEYWORDS"):
                     self.triage.blacklist_keywords = triage_data["blacklist_keywords"]
-                if "blacklist_senders" in triage_data:
+                if "blacklist_senders" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__BLACKLIST_SENDERS"):
                     self.triage.blacklist_senders = triage_data["blacklist_senders"]
                     
                 # Map Logging section
                 logging_data = yaml_data.get("logging", {})
-                if "level" in logging_data:
+                if "level" in logging_data and should_apply("EMAIL_TRIAGE_LOG_LEVEL"):
                     self.log_level = logging_data["level"].upper()
                     
             except Exception as e:
@@ -134,15 +158,16 @@ class Settings(BaseSettings):
         workspace_root = Path(__file__).parent.resolve()
         
         if not profile_name or profile_name == "default":
-            s = cls(_env_file=workspace_root / ".env")
+            env_file = workspace_root / ".env"
+            s = cls(_env_file=env_file)
             s.workspace_dir = workspace_root
             s.gmail_token_path = workspace_root / "token.json"
-            s.load_from_yaml(workspace_root / "config.yml")
+            s.load_from_yaml(workspace_root / "config.yml", env_file=env_file)
             
             # Overwrite with local config if it exists
             local_yaml = workspace_root / "config-local.yml"
             if local_yaml.exists():
-                s.load_from_yaml(local_yaml)
+                s.load_from_yaml(local_yaml, env_file=env_file)
                 
             return s
             
@@ -158,22 +183,22 @@ class Settings(BaseSettings):
         s.gmail_token_path = profile_dir / "token.json"
         
         # Load global config first (inheritance base)
-        s.load_from_yaml(workspace_root / "config.yml")
+        s.load_from_yaml(workspace_root / "config.yml", env_file=env_file)
         
         # Overwrite with global local config if it exists
         global_local_yaml = workspace_root / "config-local.yml"
         if global_local_yaml.exists():
-            s.load_from_yaml(global_local_yaml)
+            s.load_from_yaml(global_local_yaml, env_file=env_file)
         
         # Overwrite with profile-specific config if it exists
         profile_yaml = profile_dir / "config.yml"
         if profile_yaml.exists():
-            s.load_from_yaml(profile_yaml)
+            s.load_from_yaml(profile_yaml, env_file=env_file)
             
         # Overwrite with profile-specific local config if it exists
         profile_local_yaml = profile_dir / "config-local.yml"
         if profile_local_yaml.exists():
-            s.load_from_yaml(profile_local_yaml)
+            s.load_from_yaml(profile_local_yaml, env_file=env_file)
             
         return s
 

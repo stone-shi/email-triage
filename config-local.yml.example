@@ -1,0 +1,18 @@
+# Local Configuration Overrides for Email Triage & Summarization Engine
+# Copy this file to config-local.yml to override config.yml values locally.
+# DO NOT commit config-local.yml to git.
+
+# llm:
+#   # Override API endpoints locally
+#   triage_base_url: "http://localhost:11434/v1"
+#   summary_base_url: "http://localhost:11434/v1"
+#   
+#   # Override models locally
+#   triage_model: "ollama/llama3"
+#   summary_model: "ollama/llama3"
+
+# triage:
+#   # Override local thresholds
+#   confidence_threshold: 0.7
+#   tei_router_enabled: false
+#   tei_url: "http://localhost:8077/predict"

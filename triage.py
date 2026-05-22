@@ -26,14 +26,24 @@ class EmailTriageEngine:
     def __init__(self, db: EmailDB, settings_instance: Optional[Any] = None) -> None:
         self.db = db
         self.settings = settings_instance if settings_instance else settings
-        # Set up the proxy endpoint URL and api key
+        # Set up backward-compatible proxy endpoint URL and api key
         self.base_url = self.settings.llm_base_url.rstrip('/')
         self.api_key = self.settings.llm_api_key
-        
-        # Set up a reusable httpx Client with standard authorization headers
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
+        }
+        
+        # Decoupled endpoints and headers for triage and summary stages
+        self.triage_base_url = self.settings.triage_base_url.rstrip('/')
+        self.triage_headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.settings.triage_api_key}"
+        }
+        self.summary_base_url = self.settings.summary_base_url.rstrip('/')
+        self.summary_headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.settings.summary_api_key}"
         }
         self.http_client = httpx.Client(timeout=1800.0)
         
@@ -210,7 +220,7 @@ class EmailTriageEngine:
                 "'tag' (a one word lowercase tag, e.g., \"promotion\", \"notification\", \"personal\", \"vip\", \"low\")."
             )
         
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.triage_base_url}/chat/completions"
         payload = {
             "model": model_name,
             "messages": [
@@ -223,7 +233,7 @@ class EmailTriageEngine:
         
         try:
             logger.info("Level 1 Triage request sent to custom LiteLLM proxy model: %s", model_name)
-            response = self.http_client.post(url, headers=self.headers, json=payload)
+            response = self.http_client.post(url, headers=self.triage_headers, json=payload)
             response.raise_for_status()
             
             try:
@@ -296,7 +306,7 @@ class EmailTriageEngine:
                 "and 'tag' (a one word lowercase tag, e.g., \"personal\", \"vip\", \"update\")."
             )
         
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.summary_base_url}/chat/completions"
         payload = {
             "model": model_name,
             "messages": [
@@ -310,7 +320,7 @@ class EmailTriageEngine:
         start_time = time.time()
         try:
             logger.info("Level 2 Triage summary request sent to custom LiteLLM proxy model: %s", model_name)
-            response = self.http_client.post(url, headers=self.headers, json=payload)
+            response = self.http_client.post(url, headers=self.summary_headers, json=payload)
             response.raise_for_status()
             
             try:
@@ -372,7 +382,7 @@ class EmailTriageEngine:
                 "'tag' (a one word lowercase tag, e.g., \"personal\", \"vip\", \"promotion\", \"notification\")."
             )
         
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.summary_base_url}/chat/completions"
         payload = {
             "model": self.settings.summary_model,
             "messages": [
@@ -385,7 +395,7 @@ class EmailTriageEngine:
         
         try:
             logger.info("Ambiguity Triage Escalation sent to premium model: %s", self.settings.summary_model)
-            response = self.http_client.post(url, headers=self.headers, json=payload)
+            response = self.http_client.post(url, headers=self.summary_headers, json=payload)
             response.raise_for_status()
             
             resp_json = response.json()

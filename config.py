@@ -2,7 +2,7 @@ import os
 import yaml
 from pathlib import Path
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class TriageSettings(BaseModel):
@@ -45,10 +45,12 @@ class Settings(BaseSettings):
 
     triage: TriageSettings = Field(default_factory=TriageSettings)
 
-    llm_base_url: str = "https://your-llm-proxy.com/v1"
+    triage_base_url: str = "https://your-llm-proxy.com/v1"
+    summary_base_url: str = "https://your-llm-proxy.com/v1"
     triage_model: str = "deepseek/deepseek-v4-flash"
     summary_model: str = "deepseek/deepseek-v4-pro"
     log_level: str = "INFO"
+    tei_url: str = "http://10.100.0.50:8077/predict"
 
     # MCP Server settings
     mcp_transport: str = "stdio"
@@ -57,7 +59,22 @@ class Settings(BaseSettings):
 
     # API Secret Keys kept strictly in environment context
     gemini_api_key: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    llm_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_LLM_API_KEY", ""))
+    triage_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_TRIAGE_API_KEY", os.getenv("EMAIL_TRIAGE_LLM_API_KEY", "")))
+    summary_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_SUMMARY_API_KEY", os.getenv("EMAIL_TRIAGE_LLM_API_KEY", "")))
+
+    @property
+    def llm_base_url(self) -> str:
+        return self.triage_base_url
+
+    @property
+    def llm_api_key(self) -> str:
+        return self.triage_api_key
+
+    @model_validator(mode="after")
+    def sync_triage_settings(self) -> "Settings":
+        if hasattr(self, "tei_url") and self.tei_url:
+            self.triage.tei_url = self.tei_url
+        return self
 
     def load_from_yaml(self, yaml_path: Optional[Path] = None) -> None:
         if yaml_path is None:
@@ -69,7 +86,13 @@ class Settings(BaseSettings):
                 
                 # Map LLM section
                 llm_data = yaml_data.get("llm", {})
-                if "base_url" in llm_data: self.llm_base_url = llm_data["base_url"]
+                if "base_url" in llm_data:
+                    self.triage_base_url = llm_data["base_url"]
+                    self.summary_base_url = llm_data["base_url"]
+                if "triage_base_url" in llm_data: self.triage_base_url = llm_data["triage_base_url"]
+                if "summary_base_url" in llm_data: self.summary_base_url = llm_data["summary_base_url"]
+                if "triage_api_key" in llm_data: self.triage_api_key = llm_data["triage_api_key"]
+                if "summary_api_key" in llm_data: self.summary_api_key = llm_data["summary_api_key"]
                 if "triage_model" in llm_data: self.triage_model = llm_data["triage_model"]
                 if "summary_model" in llm_data: self.summary_model = llm_data["summary_model"]
                 
@@ -81,6 +104,7 @@ class Settings(BaseSettings):
                     self.triage.triage_type = triage_data["triage_type"]
                 if "tei_url" in triage_data:
                     self.triage.tei_url = triage_data["tei_url"]
+                    self.tei_url = triage_data["tei_url"]
                 if "tei_router_enabled" in triage_data:
                     self.triage.tei_router_enabled = bool(triage_data["tei_router_enabled"])
                 if "tei_noise_threshold" in triage_data:
@@ -114,6 +138,12 @@ class Settings(BaseSettings):
             s.workspace_dir = workspace_root
             s.gmail_token_path = workspace_root / "token.json"
             s.load_from_yaml(workspace_root / "config.yml")
+            
+            # Overwrite with local config if it exists
+            local_yaml = workspace_root / "config-local.yml"
+            if local_yaml.exists():
+                s.load_from_yaml(local_yaml)
+                
             return s
             
         profile_dir = workspace_root / "profiles" / profile_name
@@ -130,10 +160,20 @@ class Settings(BaseSettings):
         # Load global config first (inheritance base)
         s.load_from_yaml(workspace_root / "config.yml")
         
+        # Overwrite with global local config if it exists
+        global_local_yaml = workspace_root / "config-local.yml"
+        if global_local_yaml.exists():
+            s.load_from_yaml(global_local_yaml)
+        
         # Overwrite with profile-specific config if it exists
         profile_yaml = profile_dir / "config.yml"
         if profile_yaml.exists():
             s.load_from_yaml(profile_yaml)
+            
+        # Overwrite with profile-specific local config if it exists
+        profile_local_yaml = profile_dir / "config-local.yml"
+        if profile_local_yaml.exists():
+            s.load_from_yaml(profile_local_yaml)
             
         return s
 

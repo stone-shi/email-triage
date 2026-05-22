@@ -167,3 +167,4 @@ email_cache.db
 token.json
 credentials.json
 .DS_Store
+config-local.yml

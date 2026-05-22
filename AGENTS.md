@@ -26,6 +26,7 @@ When extending or refactoring the pipeline, strictly maintain this four-stage se
   - `EMAIL_TRIAGE_TRIAGE_MODEL` / `EMAIL_TRIAGE_SUMMARY_MODEL`: Specific DeepSeek triage and summarization model mappings.
   - `EMAIL_TRIAGE_GMAIL_CREDENTIALS_PATH` / `EMAIL_TRIAGE_GMAIL_TOKEN_PATH`: Gmail application secrets path and persistent token output path.
   - `EMAIL_TRIAGE_IMAP_HOST` / `EMAIL_TRIAGE_IMAP_PORT` / `EMAIL_TRIAGE_IMAP_LOGIN` / `EMAIL_TRIAGE_IMAP_PASSWORD`: Flat Zoho ingestion attributes.
+  - `EMAIL_TRIAGE_MCP_TRANSPORT` / `EMAIL_TRIAGE_MCP_HOST` / `EMAIL_TRIAGE_MCP_PORT`: MCP transport mode (`stdio` or `sse`), host interface binding IP, and HTTP server port.
 
 ### 4. CLI Execution & Output Design Principles
 The orchestrator entry point must support flexible execution modes controlled by command-line argument parameters:
@@ -36,6 +37,13 @@ The orchestrator entry point must support flexible execution modes controlled by
 - **`--days <n>` Flag**: Filters unread emails by parsing envelope dates to process only messages received strictly within the last `N` days.
 - **`--auth` Flag**: Forces the engine to purge old authorization tokens (`token.json`) and spin up a fresh authentication flow.
 - **`--headless` Flag**: Adapts the OAuth process to run inside remote SSH terminal console windows where automated browser window pops are unsupported. Emits the validation links exclusively via **`sys.stderr`** (protecting the JSON output feed on `stdout`) and reads the pasted landing redirect address string from console input (`input()`).
+
+### 5. Model Context Protocol (MCP) Server Architecture
+The engine includes a full Model Context Protocol (MCP) server implementation (`mcp_server.py`) enabling seamless integration with AI clients and IDE hosts:
+- **FastMCP Framework**: Declares custom tools for scanning, detailed retrieval, searching, and re-triage of email envelopes inside the local SQLite database cache.
+- **Flexible Dual Transports**: Can be configured to run over standard input/output (`stdio`) or HTTP Server-Sent Events (`sse`).
+- **Starlette / Uvicorn Web Server**: Under `sse` mode, the server initializes a Starlette HTTP application listening on the configured host interface and port.
+- **Container/External Accessibility**: The server explicitly initializes `TransportSecuritySettings` with `enable_dns_rebinding_protection=False` under container deployment, allowing arbitrary external hosts/origins (e.g. localhost, remote clients) to bind and fetch endpoints cleanly.
 
 ## Coding & Quality Standards
 - Include **Python Type Hints** in all functions and modules.

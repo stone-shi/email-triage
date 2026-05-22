@@ -29,6 +29,5 @@ RUN touch email_cache.db token.json && chmod 666 email_cache.db token.json
 # Expose an optional port for HTTP/SSE transports (if running MCP over SSE)
 EXPOSE 8000
 
-# Default command: Runs the main triage ingestion engine.
-# To run the MCP server, override the container run command with: ["python", "mcp_server.py"]
-CMD ["python", "main.py", "--human"]
+# Default command: Runs the MCP server.
+CMD ["python", "mcp_server.py"]

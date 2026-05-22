@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     summary_model: str = "deepseek/deepseek-v4-pro"
     log_level: str = "INFO"
 
+    # MCP Server settings
+    mcp_transport: str = "stdio"
+    mcp_host: str = "0.0.0.0"
+    mcp_port: int = 8000
+
     # API Secret Keys kept strictly in environment context
     gemini_api_key: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
     llm_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_LLM_API_KEY", ""))

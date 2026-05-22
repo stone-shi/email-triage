@@ -18,4 +18,4 @@ services:
     restart: unless-stopped
     # Default run: runs the main email ingestion pipeline in human mode.
     # To start it as an MCP server instead, override the container command by uncommenting below:
-    # command: ["python", "mcp_server.py"]
+    command: ["python", "mcp_server.py"]

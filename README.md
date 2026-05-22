@@ -45,6 +45,11 @@ EMAIL_TRIAGE_IMAP_HOST=imap.zoho.com
 EMAIL_TRIAGE_IMAP_PORT=993
 EMAIL_TRIAGE_IMAP_LOGIN=your_email@domain.com
 EMAIL_TRIAGE_IMAP_PASSWORD=your_app_password_here
+
+# MCP Server Settings
+EMAIL_TRIAGE_MCP_TRANSPORT=stdio
+EMAIL_TRIAGE_MCP_HOST=0.0.0.0
+EMAIL_TRIAGE_MCP_PORT=8000
 ```
 
 ---
@@ -95,6 +100,64 @@ Designed specifically to minimize context window token consumption when called p
 ### 7. Authentication & Headless Flows
 - **`--auth`**: Purges active credentials (`token.json`) and re-opens the authorization loop.
 - **`--headless`**: Emits OAuth confirmation links exclusively via `sys.stderr` for headless SSH environments.
+
+---
+
+## 🤖 Model Context Protocol (MCP) Server
+
+The engine includes a complete Model Context Protocol (MCP) server implementation (`mcp_server.py`) powered by `FastMCP`. This exposes database queries, full text search, and live triage tools directly to AI editors, hosts, and remote orchestrators.
+
+### Exposing Production MCP Tools:
+| Tool Name | Parameters | Description |
+|---|---|---|
+| `fetch_and_process_unread` | `max_per_source` (int), `days` (int) | Triggers unread email ingestion from Gmail and IMAP, executes multi-tier triage, and caches results. |
+| `list_cached_emails` | `limit` (int), `triage_level` (int) | Retrieves metadata for recently processed email records from SQLite. |
+| `get_email_details` | `message_id` (str) | Fetches the full detailed record of a cached email, including pipeline reason, confidence score, and premium summaries. |
+| `triage_single_email` | `message_id` (str) | Forces a full re-evaluation/triage of a specific cached email. |
+| `search_emails` | `query` (str) | Performs text search across sender, subject, and email body fields in SQLite. |
+
+---
+
+### Run Modes & Transports
+
+#### Mode A: Stdio Transport (Default)
+Ideal for standard IDE editors (e.g. Claude Desktop) or orchestration agents managing local processes. The server communicates directly via `stdin`/`stdout`.
+
+**Running locally in Docker:**
+```bash
+docker run -i --rm \
+  --env-file .env \
+  -v "$(pwd)/email_cache.db:/app/email_cache.db" \
+  -v "$(pwd)/token.json:/app/token.json" \
+  email-triage-email-triage
+```
+
+**Testing stdio communication manually:**
+```bash
+echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}' | \
+docker run -i --rm --env-file .env email-triage-email-triage
+```
+
+---
+
+#### Mode B: HTTP Server-Sent Events (SSE) Transport
+Ideal for containers, web applications, or remote orchestrators. The server starts an HTTP application running on Starlette & Uvicorn.
+
+**Running locally in Docker:**
+```bash
+docker run -d --name email_triage_sse \
+  -p 8000:8000 \
+  -e EMAIL_TRIAGE_MCP_TRANSPORT=sse \
+  --env-file .env \
+  -v "$(pwd)/email_cache.db:/app/email_cache.db" \
+  -v "$(pwd)/token.json:/app/token.json" \
+  email-triage-email-triage
+```
+
+**Verifying the HTTP/SSE stream:**
+```bash
+curl -i http://localhost:8000/sse
+```
 
 ---
 

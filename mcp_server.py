@@ -33,7 +33,15 @@ from imap_client import IMAPClient
 from config import settings
 
 # Initialize FastMCP server
-mcp = FastMCP("Email Triage Engine")
+from mcp.server.transport_security import TransportSecuritySettings
+
+security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+mcp = FastMCP(
+    "Email Triage Engine",
+    host=settings.mcp_host,
+    port=settings.mcp_port,
+    transport_security=security
+)
 
 # Lazy initializers to ensure files are resolved within their active contexts
 def get_resources(profile_name: str = "default"):
@@ -387,4 +395,5 @@ def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:
 
 if __name__ == "__main__":
     # Run the FastMCP server
-    mcp.run(transport="stdio")
+    logger.info("Starting MCP server with transport: %s on %s:%d", settings.mcp_transport, settings.mcp_host, settings.mcp_port)
+    mcp.run(transport=settings.mcp_transport)

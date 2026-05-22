@@ -10,8 +10,7 @@ triage:
   tei_router_enabled: true
   tei_noise_threshold: 0.6
   tei_signal_threshold: 0.6
-  whitelist_vip_senders:
-    - "your_vip_email@gmail.com"
+  whitelist_vip_senders: []
   whitelist_domains:
     - "@none"
   blacklist_keywords:

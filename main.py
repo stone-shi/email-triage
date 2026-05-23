@@ -403,6 +403,9 @@ def main() -> None:
     parser.add_argument("--limit", type=int, help="Limit the maximum number of output emails for pagination")
     parser.add_argument("--output", type=str, help="Write full verbose JSON array directly to disk and emit only a lightweight pointer summary to stdout")
     parser.add_argument("--profile", type=str, default="default", help="Dynamic multi-tenant profile name directory under profiles/")
+    parser.add_argument("--mark-read-all", action="store_true", help="Mark all unread emails as read on the mail servers")
+    parser.add_argument("--mark-read-message", type=str, help="Mark a specific email (by Message-ID or internal ID) as read")
+    parser.add_argument("--mark-read-level", type=int, choices=[0, 1, 2], help="Mark all unread emails with this cached triage level as read")
     args = parser.parse_args()
 
     # Populate dynamic profile configuration settings
@@ -429,6 +432,34 @@ def main() -> None:
     db = EmailDB(settings_instance=settings)
     engine = EmailTriageEngine(db, settings_instance=settings)
     
+    # Check if a mark-read action is requested
+    if args.mark_read_all or args.mark_read_message is not None or args.mark_read_level is not None:
+        if args.human:
+            logger.info("Executing mark-read action...")
+        
+        result = engine.mark_emails_read(
+            level=args.mark_read_level,
+            message_id=args.mark_read_message,
+            all_emails=args.mark_read_all
+        )
+        
+        if args.human:
+            border = "=" * 60
+            print(f"\n{border}\n✉️ MARK-READ EXECUTION SUMMARY\n{border}")
+            print(f" Gmail messages marked read: {result['gmail_marked_count']}")
+            print(f" IMAP messages marked read:  {result['imap_marked_count']}")
+            if result["errors"]:
+                print(" Errors encountered:")
+                for err in result["errors"]:
+                    print(f" - {err}")
+            print(border)
+        else:
+            if args.pretty:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                print(json.dumps(result, ensure_ascii=False))
+        return
+
     stats = {
         "total_scanned": 0,
         "cached_skipped": 0,

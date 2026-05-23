@@ -63,3 +63,16 @@ class IMAPClient:
         except Exception as e:
             logger.error("Failed to fetch full body for IMAP UID %s: %s", uid, e)
             return ""
+
+    def mark_as_read(self, uids: List[str]) -> bool:
+        """Mark a list of IMAP message UIDs as read by setting the \\Seen flag."""
+        if not uids:
+            return False
+        try:
+            logger.info("Marking %d IMAP messages as read...", len(uids))
+            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+                mailbox.flag(uids, '\\Seen', True)
+            return True
+        except Exception as e:
+            logger.error("Failed to mark IMAP messages as read: %s", e)
+            return False

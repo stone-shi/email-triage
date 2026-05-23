@@ -10,7 +10,7 @@ from config import settings
 logger = logging.getLogger("email_triage.gmail")
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
 class GmailClient:
     def __init__(self, settings_instance: Optional[Any] = None) -> None:
@@ -21,6 +21,8 @@ class GmailClient:
 
     def _authenticate(self) -> None:
         """Handles OAuth 2.0 authentication flow and loads/persists tokens."""
+        # Allow local HTTP redirect URIs (needed for container/headless OAuth flow)
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         try:
             if self.settings.gmail_token_path.exists():
                 self.creds = Credentials.from_authorized_user_file(
@@ -196,3 +198,21 @@ class GmailClient:
         except Exception as e:
             logger.error("Failed to fetch full body for message %s: %s", msg_id, e)
             return ""
+
+    def mark_as_read(self, msg_ids: List[str]) -> bool:
+        """Mark a list of Gmail internal message IDs as read by removing the UNREAD label."""
+        if not self.service or not msg_ids:
+            return False
+        try:
+            logger.info("Marking %d Gmail messages as read...", len(msg_ids))
+            self.service.users().messages().batchModify(
+                userId='me',
+                body={
+                    'ids': msg_ids,
+                    'removeLabelIds': ['UNREAD']
+                }
+            ).execute()
+            return True
+        except Exception as e:
+            logger.error("Failed to mark Gmail messages as read: %s", e)
+            return False

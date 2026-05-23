@@ -2,7 +2,7 @@ import logging
 import re
 import json
 import time
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from pydantic import BaseModel, Field
 import httpx
 import tiktoken
@@ -418,3 +418,89 @@ class EmailTriageEngine:
             elif 'response' in locals():
                 logger.error("Raw proxy server response body text was: \n%s", response.text)
             return 2, f"Escalation error: {e}", 1.0, "personal"
+
+    def mark_emails_read(
+        self,
+        level: Optional[int] = None,
+        message_id: Optional[str] = None,
+        all_emails: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Marks unread emails in the mailboxes as read based on criteria:
+        - all_emails=True: mark all unread emails read.
+        - message_id: mark the specific message with this Message-ID/internal-ID read.
+        - level: mark all unread emails with this cached triage level (0, 1, or 2) read.
+        """
+        from gmail_client import GmailClient
+        from imap_client import IMAPClient
+        
+        gmail_marked = []
+        imap_marked = []
+        errors = []
+
+        # 1. Fetch unread emails from Gmail
+        try:
+            gmail = GmailClient(settings_instance=self.settings)
+            gmail_unread = gmail.fetch_unread_messages()
+        except Exception as e:
+            logger.error("Failed to fetch Gmail unread messages during mark-read: %s", e)
+            errors.append(f"Gmail fetch error: {e}")
+            gmail_unread = []
+
+        # 2. Fetch unread emails from IMAP
+        try:
+            imap = IMAPClient(settings_instance=self.settings)
+            imap_unread = imap.fetch_unread_headers()
+        except Exception as e:
+            logger.error("Failed to fetch IMAP unread messages during mark-read: %s", e)
+            errors.append(f"IMAP fetch error: {e}")
+            imap_unread = []
+
+        # Helper to match emails by criteria
+        def get_matching_ids(emails: List[Dict[str, Any]]) -> List[str]:
+            matching_ids = []
+            for e in emails:
+                mid = e["message_id"]
+                internal_id = e["id"]
+                
+                if all_emails:
+                    matching_ids.append(internal_id)
+                elif message_id and (mid == message_id or internal_id == message_id):
+                    matching_ids.append(internal_id)
+                elif level is not None:
+                    cached = self.db.get_cached_result(mid)
+                    if cached and cached.get("triage_level") == level:
+                        matching_ids.append(internal_id)
+            return matching_ids
+
+        # 3. Mark Gmail emails read
+        gmail_to_mark = get_matching_ids(gmail_unread)
+        if gmail_to_mark:
+            try:
+                success = gmail.mark_as_read(gmail_to_mark)
+                if success:
+                    gmail_marked = gmail_to_mark
+                else:
+                    errors.append("Failed to execute Gmail batchModify")
+            except Exception as e:
+                errors.append(f"Gmail modify error: {e}")
+
+        # 4. Mark IMAP emails read
+        imap_to_mark = get_matching_ids(imap_unread)
+        if imap_to_mark:
+            try:
+                success = imap.mark_as_read(imap_to_mark)
+                if success:
+                    imap_marked = imap_to_mark
+                else:
+                    errors.append("Failed to execute IMAP flag command")
+            except Exception as e:
+                errors.append(f"IMAP modify error: {e}")
+
+        return {
+            "gmail_marked_count": len(gmail_marked),
+            "imap_marked_count": len(imap_marked),
+            "gmail_ids": gmail_marked,
+            "imap_uids": imap_marked,
+            "errors": errors
+        }

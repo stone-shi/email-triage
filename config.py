@@ -189,6 +189,11 @@ class Settings(BaseSettings):
         if profile_local_yaml.exists():
             s.load_from_yaml(profile_local_yaml, env_file=env_file)
             
+        # Resolve relative credentials path to the profile directory if it exists there
+        if s.gmail_credentials_path and not s.gmail_credentials_path.is_absolute():
+            if (profile_dir / s.gmail_credentials_path).exists():
+                s.gmail_credentials_path = profile_dir / s.gmail_credentials_path
+            
         return s
 
 settings = Settings.load_for_profile("default")

@@ -149,6 +149,13 @@ def get_resources(profile_name: str = "default"):
 
     from config import Settings
     profile_settings = Settings.load_for_profile(profile_name)
+    
+    logger.info("get_resources active. Profile: %s (mapped from context: %s). Paths: DB=%s, Token=%s, Creds=%s",
+                profile_name, mapped_profile,
+                profile_settings.workspace_dir / "email_cache.db",
+                profile_settings.gmail_token_path,
+                profile_settings.gmail_credentials_path)
+
     db = EmailDB(settings_instance=profile_settings)
     engine = EmailTriageEngine(db, settings_instance=profile_settings)
     return db, engine, profile_settings
@@ -175,6 +182,30 @@ def filter_emails_by_days(emails: List[Dict[str, Any]], days: int) -> List[Dict[
 # =====================================================================
 # TOOLS SECTION
 # =====================================================================
+
+@mcp.tool()
+def mark_emails_as_read(
+    level: Optional[int] = None,
+    message_id: Optional[str] = None,
+    all_emails: bool = False,
+    profile: str = "default"
+) -> Dict[str, Any]:
+    """
+    Marks unread emails in the mailboxes as read based on specified criteria.
+    Only one of level, message_id, or all_emails=True should be provided.
+
+    :param level: The cached triage level (0 = noise, 1 = unimportant, 2 = important) to mark read.
+    :param message_id: The specific Message-ID (RFC 2822 header) or internal ID of the email to mark read.
+    :param all_emails: If True, marks all currently unread emails as read.
+    :param profile: The dynamic profile environment to load (default: "default").
+    :return: A dictionary detailing execution results, counts of marked emails, and any errors.
+    """
+    db, engine, settings = get_resources(profile)
+    return engine.mark_emails_read(
+        level=level,
+        message_id=message_id,
+        all_emails=all_emails
+    )
 
 @mcp.tool()
 def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: str = "default") -> str:

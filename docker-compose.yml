@@ -1,21 +1,25 @@
 version: '3.8'
 
 services:
-  email-triage:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: email_triage_runner
+  email-triage-mcp:
+    image: registry.shifamily.com/homestack/email-triage:latest
+    container_name: email-triage-mcp
     env_file:
-      - .env
+      - ai.env
+    environment:
+      - EMAIL_TRIAGE_MCP_TRANSPORT=sse
+    ports:
+      - "4003:8000"
     volumes:
-      # Persist the SQLite triage database cache on the host machine
-      - ./email_cache.db:/app/email_cache.db
-      # Persist the Gmail API access token on the host machine
-      - ./token.json:/app/token.json
-      # Optional: mount Gmail API application credentials if needed
-      # - ./credentials.json:/app/credentials.json
+      - email-triage-mcp-config:/app/profiles
     restart: unless-stopped
-    # Default run: runs the main email ingestion pipeline in human mode.
-    # To start it as an MCP server instead, override the container command by uncommenting below:
     command: ["python", "mcp_server.py"]
+    networks:
+      - home-net
+
+volumes:
+  email-triage-mcp-config:
+
+networks:
+  home-net:
+    external: true

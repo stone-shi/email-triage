@@ -212,6 +212,10 @@ def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: st
     """
     Triggers unread email ingestion from Gmail and IMAP, runs the multi-tier triage engine,
     saves details in local cache, and returns results.
+    
+    CRITICAL: This is the ONLY tool that retrieves currently unread emails from the mailbox.
+    It returns triage details and summaries for both newly ingested unread emails and previously 
+    cached unread emails. Always use this tool when asked to fetch, check, or list unread emails.
 
     :param max_per_source: Maximum number of unread emails to process per account source.
     :param days: Retrieve only unread emails received within this number of past days.
@@ -400,130 +404,67 @@ def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: st
     return "\n".join(lines)
 
 @mcp.tool()
-def list_cached_emails(limit: int = 20, triage_level: Optional[int] = None, profile: str = "default") -> List[Dict[str, Any]]:
-    """
-    Retrieves a list of recently cached triage email records from the local SQLite database.
-
-    :param limit: The maximum number of records to return (default: 20).
-    :param triage_level: Optional filter for triage level (0 = Noise, 1 = Unimportant, 2 = Important/Summary).
-    :param profile: Dynamic profile environment to load (default: "default").
-    :return: List of dictionaries containing metadata for matching emails.
-    """
-    db, _, _ = get_resources(profile)
-    results = []
-    try:
-        import sqlite3
-        with db._get_connection() as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            if triage_level is not None:
-                cursor.execute(
-                    "SELECT message_id, account, sender, subject, date_str, triage_level, tag, reason, score, processed_at FROM email_cache WHERE triage_level = ? ORDER BY processed_at DESC LIMIT ?",
-                    (triage_level, limit)
-                )
-            else:
-                cursor.execute(
-                    "SELECT message_id, account, sender, subject, date_str, triage_level, tag, reason, score, processed_at FROM email_cache ORDER BY processed_at DESC LIMIT ?",
-                    (limit,)
-                )
-            results = [dict(r) for r in cursor.fetchall()]
-    except Exception as e:
-        logger.error("Error querying cached emails in list_cached_emails: %s", e)
-    return results
-
-@mcp.tool()
-def get_email_details(message_id: str, profile: str = "default") -> Dict[str, Any]:
-    """
-    Fetches the detailed record of a cached email by its unique Message-ID.
-    Returns metadata, full email body, pipeline reasons, confidence scores, and premium summaries.
-
-    :param message_id: The exact Message-ID value of the target email.
-    :param profile: Dynamic profile environment to load (default: "default").
-    :return: Dict containing the database fields of the email, or an error dict if not found.
-    """
-    db, _, _ = get_resources(profile)
-    cached = db.get_cached_result(message_id)
-    if not cached:
-        return {"error": f"No email found in local cache matching message_id: {message_id}"}
-    return cached
-
-@mcp.tool()
-def triage_single_email(message_id: str, profile: str = "default") -> Dict[str, Any]:
-    """
-    Forces a re-evaluation/triage of a specific email already cached.
-    This fetches the body, re-runs static routing, runs classification, and regenerates Level 2 summaries.
-
-    :param message_id: The exact Message-ID value of the target email.
-    :param profile: Dynamic profile environment to load (default: "default").
-    :return: Dict containing the updated triage database record.
-    """
-    db, engine, settings = get_resources(profile)
-    cached = db.get_cached_result(message_id)
-    if not cached:
-        return {"error": f"Email with message_id {message_id} must already exist in cache to re-triage."}
-    
-    subject = cached.get("subject") or ""
-    sender = cached.get("sender") or ""
-    snippet = cached.get("subject") or ""  # Fallback
-    body = cached.get("email_body") or snippet
-    account = cached.get("account") or "unknown"
-    date_str = cached.get("date_str") or ""
-
-    # Force full run
-    is_noise, l0_reason = engine.run_level_0_static(sender, subject)
-    if is_noise:
-        db.save_triage_result(
-            message_id, account, sender, subject, date_str,
-            level_0_status="filtered", triage_level=0, tag="low", level_1_run=False, level_2_run=False
-        )
-        return db.get_cached_result(message_id)
-
-    suggested_lvl, reason, score, l1_tag, _ = engine.run_level_1_classification(sender, subject, body[:300])
-    if suggested_lvl == 2:
-        summary, sum_score, l2_tag, _ = engine.run_level_2_summarization(subject, body)
-        db.save_triage_result(
-            message_id, account, sender, subject, date_str,
-            level_0_status="passed", level_1_status="important", level_2_summary=summary,
-            reason=reason, score=sum_score, triage_level=2, tag=l2_tag,
-            email_body=body, level_1_run=True, level_2_run=True
-        )
-    else:
-        db.save_triage_result(
-            message_id, account, sender, subject, date_str,
-            level_0_status="passed", level_1_status="unimportant", reason=reason, score=score,
-            triage_level=suggested_lvl, tag=l1_tag, email_body=body, level_1_run=True, level_2_run=False
-        )
-
-    return db.get_cached_result(message_id)
-
-@mcp.tool()
 def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:
     """
-    Performs a text search on the database of processed emails.
-    Checks sender, subject, and email body fields.
+    Searches the live Gmail and IMAP mailboxes for emails matching the query.
+    Utilizes the internal cache to enrich search results with triage status, reason,
+    scores, and executive summaries at 0 token cost.
 
-    :param query: Search query text (e.g., "invoice", "important meeting").
+    :param query: Search query text (e.g., "invoice", "urgent").
     :param profile: Dynamic profile environment to load (default: "default").
-    :return: List of email records matching the search query.
+    :return: List of email records matching the query, enriched with internal cache details.
     """
-    db, _, _ = get_resources(profile)
+    db, engine, settings = get_resources(profile)
     results = []
+    
+    # 1. Search Gmail
     try:
-        import sqlite3
-        with db._get_connection() as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            sql = """
-                SELECT message_id, account, sender, subject, date_str, triage_level, tag, reason, score, processed_at 
-                FROM email_cache 
-                WHERE sender LIKE ? OR subject LIKE ? OR email_body LIKE ?
-                ORDER BY processed_at DESC LIMIT 50
-            """
-            like_query = f"%{query}%"
-            cursor.execute(sql, (like_query, like_query, like_query))
-            results = [dict(r) for r in cursor.fetchall()]
+        gmail = GmailClient(settings_instance=settings)
+        gmail_results = gmail.search_messages(query)
+        for msg in gmail_results:
+            msg_id = msg["message_id"]
+            cached = db.get_cached_result(msg_id) or {}
+            results.append({
+                "id": msg["id"],
+                "message_id": msg_id,
+                "sender": msg["sender"],
+                "subject": msg["subject"],
+                "date": msg["date"],
+                "snippet": msg["snippet"],
+                "account": msg["account"],
+                "triage_level": cached.get("triage_level"),
+                "tag": cached.get("tag"),
+                "reason": cached.get("reason") or ("Un-triaged" if not cached else "Cached"),
+                "score": cached.get("score"),
+                "summary": cached.get("level_2_summary")
+            })
     except Exception as e:
-        logger.error("Error searching emails in SQLite: %s", e)
+        logger.error("Error searching Gmail inside MCP search tool: %s", e)
+
+    # 2. Search IMAP
+    try:
+        imap = IMAPClient(settings_instance=settings)
+        imap_results = imap.search_messages(query)
+        for msg in imap_results:
+            msg_id = msg["message_id"]
+            cached = db.get_cached_result(msg_id) or {}
+            results.append({
+                "id": msg["id"],
+                "message_id": msg_id,
+                "sender": msg["sender"],
+                "subject": msg["subject"],
+                "date": msg["date"],
+                "snippet": msg["snippet"],
+                "account": msg["account"],
+                "triage_level": cached.get("triage_level"),
+                "tag": cached.get("tag"),
+                "reason": cached.get("reason") or ("Un-triaged" if not cached else "Cached"),
+                "score": cached.get("score"),
+                "summary": cached.get("level_2_summary")
+            })
+    except Exception as e:
+        logger.error("Error searching IMAP inside MCP search tool: %s", e)
+
     return results
 
 if __name__ == "__main__":

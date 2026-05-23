@@ -216,3 +216,59 @@ class GmailClient:
         except Exception as e:
             logger.error("Failed to mark Gmail messages as read: %s", e)
             return False
+
+    def search_messages(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Searches Gmail messages matching a specific query.
+        Uses format='metadata' for token/bandwidth efficiency.
+        """
+        if not self.service:
+            logger.error("Gmail service client is not initialized.")
+            return []
+
+        results: List[Dict[str, Any]] = []
+        try:
+            logger.info("Searching Gmail messages with query: '%s'", query)
+            response = self.service.users().messages().list(userId='me', q=query).execute()
+            messages = response.get('messages', [])
+
+            if not messages:
+                logger.info("No Gmail messages found matching search query.")
+                return []
+
+            logger.info("Found %d matching messages. Fetching metadata...", len(messages))
+            for msg in messages:
+                msg_id = msg['id']
+                try:
+                    msg_meta = self.service.users().messages().get(
+                        userId='me', id=msg_id, format='metadata',
+                        metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
+                    ).execute()
+
+                    headers = msg_meta.get('payload', {}).get('headers', [])
+                    header_dict = {h['name']: h['value'] for h in headers}
+
+                    message_id = header_dict.get('Message-ID', msg_id)
+                    from_str = header_dict.get('From', 'Unknown Sender')
+                    subject_str = header_dict.get('Subject', '(No Subject)')
+                    date_str = header_dict.get('Date', '')
+                    snippet_str = msg_meta.get('snippet', '')
+
+                    results.append({
+                        'id': msg_id,
+                        'message_id': message_id,
+                        'sender': from_str,
+                        'subject': subject_str,
+                        'date': date_str,
+                        'snippet': snippet_str,
+                        'account': self.settings.gmail_account,
+                        'raw_meta': msg_meta
+                    })
+                except Exception as inner_e:
+                    logger.error("Failed to fetch metadata for search message %s: %s", msg_id, inner_e)
+                    continue
+
+            return results
+        except Exception as e:
+            logger.error("Failed to search Gmail messages: %s", e, exc_info=True)
+            return []

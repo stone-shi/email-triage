@@ -76,3 +76,37 @@ class IMAPClient:
         except Exception as e:
             logger.error("Failed to mark IMAP messages as read: %s", e)
             return False
+
+    def search_messages(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Connects to IMAP server and searches for emails matching the query.
+        """
+        results: List[Dict[str, Any]] = []
+        try:
+            logger.info("Connecting to IMAP server %s:%d for search...", self.host, self.port)
+            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+                logger.info("Searching IMAP messages for query: '%s'", query)
+                messages = mailbox.fetch(AND(text=query), headers_only=True, mark_seen=False)
+                
+                for msg in messages:
+                    message_id = msg.headers.get('message-id', [f"imap_{msg.uid}"])[0]
+                    from_str = msg.from_
+                    subject_str = msg.subject
+                    date_str = str(msg.date)
+                    snippet_str = msg.desc if hasattr(msg, 'desc') and msg.desc else f"Subject: {subject_str}"
+
+                    results.append({
+                        'id': msg.uid,
+                        'message_id': message_id,
+                        'sender': from_str,
+                        'subject': subject_str,
+                        'date': date_str,
+                        'snippet': snippet_str,
+                        'account': self.login_user
+                    })
+
+            logger.info("Found %d matching emails from IMAP server.", len(results))
+            return results
+        except Exception as e:
+            logger.error("Failed to search emails from IMAP: %s", e, exc_info=True)
+            return []

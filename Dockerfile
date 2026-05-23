@@ -22,10 +22,6 @@ RUN pip install --no-cache-dir -r requirements.txt --index-url https://pypi.org/
 
 # Copy the rest of the application code
 COPY . .
-
-# Create SQLite database placeholder file and set permissive flags so the container can read/write database files
-RUN touch email_cache.db token.json && chmod 666 email_cache.db token.json
-
 # Expose an optional port for HTTP/SSE transports (if running MCP over SSE)
 EXPOSE 8000
 

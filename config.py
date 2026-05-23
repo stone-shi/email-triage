@@ -157,19 +157,8 @@ class Settings(BaseSettings):
     def load_for_profile(cls, profile_name: str = "default") -> "Settings":
         workspace_root = Path(__file__).parent.resolve()
         
-        if not profile_name or profile_name == "default":
-            env_file = workspace_root / ".env"
-            s = cls(_env_file=env_file)
-            s.workspace_dir = workspace_root
-            s.gmail_token_path = workspace_root / "token.json"
-            s.load_from_yaml(workspace_root / "config.yml", env_file=env_file)
-            
-            # Overwrite with local config if it exists
-            local_yaml = workspace_root / "profiles" / "config-local.yml"
-            if local_yaml.exists():
-                s.load_from_yaml(local_yaml, env_file=env_file)
-                
-            return s
+        if not profile_name:
+            profile_name = "default"
             
         profile_dir = workspace_root / "profiles" / profile_name
         profile_dir.mkdir(parents=True, exist_ok=True)

@@ -101,7 +101,7 @@ class MCPTokenAuthMiddleware:
             headers = Headers(scope=scope)
             path = scope.get("path", "")
             
-            if path.startswith("/sse") or path.startswith("/message"):
+            if path.startswith("/sse"):
                 token = None
                 auth_header = headers.get("authorization")
                 if auth_header and auth_header.lower().startswith("bearer "):

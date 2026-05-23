@@ -165,7 +165,7 @@ class Settings(BaseSettings):
             s.load_from_yaml(workspace_root / "config.yml", env_file=env_file)
             
             # Overwrite with local config if it exists
-            local_yaml = workspace_root / "config-local.yml"
+            local_yaml = workspace_root / "profiles" / "config-local.yml"
             if local_yaml.exists():
                 s.load_from_yaml(local_yaml, env_file=env_file)
                 
@@ -186,7 +186,7 @@ class Settings(BaseSettings):
         s.load_from_yaml(workspace_root / "config.yml", env_file=env_file)
         
         # Overwrite with global local config if it exists
-        global_local_yaml = workspace_root / "config-local.yml"
+        global_local_yaml = workspace_root / "profiles" / "config-local.yml"
         if global_local_yaml.exists():
             s.load_from_yaml(global_local_yaml, env_file=env_file)
         

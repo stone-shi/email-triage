@@ -102,6 +102,7 @@ class MCPTokenAuthMiddleware:
             path = scope.get("path", "")
             
             if path.startswith("/sse"):
+                self.token_map = load_token_profile_map()
                 token = None
                 auth_header = headers.get("authorization")
                 if auth_header and auth_header.lower().startswith("bearer "):

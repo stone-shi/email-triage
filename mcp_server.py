@@ -43,8 +43,109 @@ mcp = FastMCP(
     transport_security=security
 )
 
+import contextvars
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+
+# ContextVar to store the authenticated profile name for the current request
+current_profile = contextvars.ContextVar("current_profile", default="default")
+
+def load_token_profile_map() -> Dict[str, str]:
+    """Scans root .env and all profile .env files to build a token-to-profile map."""
+    token_map = {}
+    workspace_root = Path(__file__).parent.resolve()
+    
+    # 1. Check root .env for default token
+    root_env = workspace_root / ".env"
+    if root_env.exists():
+        try:
+            with open(root_env, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        if k.strip() == "EMAIL_TRIAGE_PROFILE_TOKEN":
+                            token_map[v.strip()] = "default"
+        except Exception:
+            pass
+            
+    # 2. Check profiles/ directories
+    profiles_dir = workspace_root / "profiles"
+    if profiles_dir.exists():
+        for p_path in profiles_dir.iterdir():
+            if p_path.is_dir():
+                profile_name = p_path.name
+                profile_env = p_path / ".env"
+                if profile_env.exists():
+                    try:
+                        with open(profile_env, "r", encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if line and not line.startswith("#") and "=" in line:
+                                    k, v = line.split("=", 1)
+                                    if k.strip() == "EMAIL_TRIAGE_PROFILE_TOKEN":
+                                        token_map[v.strip()] = profile_name
+                    except Exception:
+                        pass
+    return token_map
+
+class MCPTokenAuthMiddleware:
+    def __init__(self, app, token_map: Dict[str, str]):
+        self.app = app
+        self.token_map = token_map
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            from starlette.datastructures import Headers, QueryParams
+            
+            headers = Headers(scope=scope)
+            path = scope.get("path", "")
+            
+            if path.startswith("/sse") or path.startswith("/message"):
+                token = None
+                auth_header = headers.get("authorization")
+                if auth_header and auth_header.lower().startswith("bearer "):
+                    token = auth_header[7:].strip()
+                if not token:
+                    token = headers.get("x-profile-token")
+                if not token:
+                    query_params = QueryParams(scope.get("query_string", b"").decode("utf-8"))
+                    token = query_params.get("token")
+                    
+                if not token or token not in self.token_map:
+                    body = b'{"error":"Unauthorized: Invalid or missing profile token"}'
+                    await send({
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode("utf-8")),
+                        ]
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": body,
+                        "more_body": False
+                    })
+                    return
+                
+                profile = self.token_map[token]
+                token_t = current_profile.set(profile)
+                try:
+                    await self.app(scope, receive, send)
+                    return
+                finally:
+                    current_profile.reset(token_t)
+        
+        await self.app(scope, receive, send)
+
 # Lazy initializers to ensure files are resolved within their active contexts
 def get_resources(profile_name: str = "default"):
+    # Override profile name with the one mapped from the SSE token context
+    mapped_profile = current_profile.get("default")
+    if mapped_profile != "default":
+        profile_name = mapped_profile
+
     from config import Settings
     profile_settings = Settings.load_for_profile(profile_name)
     db = EmailDB(settings_instance=profile_settings)
@@ -394,6 +495,32 @@ def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:
     return results
 
 if __name__ == "__main__":
-    # Run the FastMCP server
-    logger.info("Starting MCP server with transport: %s on %s:%d", settings.mcp_transport, settings.mcp_host, settings.mcp_port)
-    mcp.run(transport=settings.mcp_transport)
+    if settings.mcp_transport == "sse":
+        import uvicorn
+        import anyio
+        
+        # Load profile token map
+        token_map = load_token_profile_map()
+        masked_map = {k[:4] + "...": v for k, v in token_map.items()}
+        logger.info("Starting SSE MCP server. Loaded profile token mappings: %s", masked_map)
+        
+        # Get the standard FastMCP SSE Starlette app
+        app = mcp.sse_app()
+        
+        # Add token validation middleware
+        app.add_middleware(MCPTokenAuthMiddleware, token_map=token_map)
+        
+        async def run_server():
+            config = uvicorn.Config(
+                app,
+                host=settings.mcp_host,
+                port=settings.mcp_port,
+                log_level=settings.log_level.lower(),
+            )
+            server = uvicorn.Server(config)
+            await server.serve()
+            
+        anyio.run(run_server)
+    else:
+        logger.info("Starting Stdio MCP server on stdin/stdout.")
+        mcp.run(transport=settings.mcp_transport)

@@ -35,12 +35,41 @@ from config import settings
 # Initialize FastMCP server
 from mcp.server.transport_security import TransportSecuritySettings
 
+class RobustFastMCP(FastMCP):
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        cleaned_name = name
+        while True:
+            if cleaned_name.startswith("email_triage__"):
+                cleaned_name = cleaned_name[len("email_triage__"):]
+            elif cleaned_name.startswith("email-triage__"):
+                cleaned_name = cleaned_name[len("email-triage__"):]
+            else:
+                break
+
+        # Check if cleaned_name matches a registered tool name directly
+        tools = getattr(self._tool_manager, "_tools", {})
+        if cleaned_name in tools:
+            return await super().call_tool(cleaned_name, arguments)
+
+        # Fallback: check if any registered tool starts with cleaned_name (handles truncation)
+        # We sort by length to select the shortest/base tool name first (avoiding alias conflicts)
+        matching_tools = sorted(
+            [t_name for t_name in tools if t_name.startswith(cleaned_name)],
+            key=len
+        )
+        if matching_tools:
+            logger.info("Fuzzy matched tool call '%s' (cleaned: '%s') to registered tool '%s'", name, cleaned_name, matching_tools[0])
+            return await super().call_tool(matching_tools[0], arguments)
+
+        return await super().call_tool(cleaned_name, arguments)
+
 security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
-mcp = FastMCP(
+mcp = RobustFastMCP(
     "Email Triage Engine",
     host=settings.mcp_host,
     port=settings.mcp_port,
-    transport_security=security
+    transport_security=security,
+    warn_on_duplicate_tools=False
 )
 
 import contextvars
@@ -206,6 +235,8 @@ def mark_emails_as_read(
         message_id=message_id,
         all_emails=all_emails
     )
+
+
 
 @mcp.tool()
 def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: str = "default") -> str:
@@ -403,6 +434,8 @@ def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: st
             
     return "\n".join(lines)
 
+
+
 @mcp.tool()
 def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:
     """
@@ -466,6 +499,8 @@ def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:
         logger.error("Error searching IMAP inside MCP search tool: %s", e)
 
     return results
+
+
 
 if __name__ == "__main__":
     if settings.mcp_transport == "sse":

@@ -72,6 +72,11 @@ if [[ ! -f "Dockerfile" ]]; then
     exit 1
 fi
 
+log_info "Generating version.txt..."
+GIT_REV=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+echo "${GIT_REV} build: ${TIMESTAMP}" > version.txt
+
 log_info "Building local Docker image '${IMAGE_NAME}:latest'..."
 docker build -t "${IMAGE_NAME}:latest" -f Dockerfile .
 

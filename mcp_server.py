@@ -74,7 +74,8 @@ mcp = RobustFastMCP(
 
 import contextvars
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.requests import Request
 
 # ContextVar to store the authenticated profile name for the current request
 current_profile = contextvars.ContextVar("current_profile", default="default")
@@ -500,6 +501,20 @@ def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:
 
     return results
 
+
+def get_version_info() -> str:
+    version_file = Path(__file__).parent.resolve() / "version.txt"
+    if version_file.exists():
+        try:
+            return version_file.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            return f"Error reading version.txt: {e}"
+    return "unknown build: dev"
+
+
+@mcp.custom_route("/version", methods=["GET"])
+async def get_version(request: Request) -> PlainTextResponse:
+    return PlainTextResponse(get_version_info())
 
 
 if __name__ == "__main__":

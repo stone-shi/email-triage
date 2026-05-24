@@ -168,3 +168,4 @@ token.json
 credentials.json
 .DS_Store
 config-local.yml
+version.txt

@@ -438,47 +438,86 @@ def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: st
 
 
 @mcp.tool()
-def create_new_draft(to: str, subject: str, body: str, profile: str = "default") -> Dict[str, Any]:
+def create_new_draft(to: str, subject: str, body: str, account_type: str = "gmail", profile: str = "default") -> Dict[str, Any]:
     """
-    Creates a new draft email in Gmail.
+    Creates a new draft email (Gmail or IMAP).
 
     :param to: The recipient's email address.
     :param subject: The subject of the email.
     :param body: The text body content of the email.
+    :param account_type: Either "gmail" or "imap" (default: "gmail").
     :param profile: The dynamic profile environment to load (default: "default").
-    :return: A dictionary containing the created draft metadata from Gmail.
+    :return: A dictionary containing the created draft metadata from Gmail or IMAP.
     """
     _, _, settings = get_resources(profile)
-    gmail = GmailClient(settings_instance=settings)
-    return gmail.create_draft(to=to, subject=subject, body=body)
+    if account_type.lower() == "imap":
+        imap = IMAPClient(settings_instance=settings)
+        return imap.create_draft(to=to, subject=subject, body=body)
+    else:
+        gmail = GmailClient(settings_instance=settings)
+        return gmail.create_draft(to=to, subject=subject, body=body)
 
 @mcp.tool()
-def create_draft_reply(message_id: str, body: str, profile: str = "default") -> Dict[str, Any]:
+def create_draft_reply(message_id: str, body: str, account_type: Optional[str] = None, profile: str = "default") -> Dict[str, Any]:
     """
-    Creates a draft reply to an existing email (by internal Gmail ID or global Message-ID) in Gmail.
+    Creates a draft reply to an existing email (by internal Gmail ID/IMAP UID or global Message-ID).
 
-    :param message_id: The specific Message-ID (RFC 2822 header) or Gmail internal ID of the email to reply to.
+    :param message_id: The specific Message-ID (RFC 2822 header), Gmail internal ID, or IMAP UID of the email to reply to.
     :param body: The reply text body content.
+    :param account_type: Optional override. Either "gmail" or "imap". If not provided, it will auto-detect from the local triage database cache.
     :param profile: The dynamic profile environment to load (default: "default").
     :return: A dictionary containing the created draft metadata.
     """
-    _, _, settings = get_resources(profile)
-    gmail = GmailClient(settings_instance=settings)
-    return gmail.create_reply_draft(message_id=message_id, body=body)
+    db, _, settings = get_resources(profile)
+    
+    # Auto-detect account type
+    detected_type = "gmail"
+    if account_type:
+        detected_type = account_type.lower()
+    else:
+        cached = db.get_cached_result(message_id)
+        if cached:
+            account = cached.get("account", "")
+            if account == settings.imap_login:
+                detected_type = "imap"
+
+    if detected_type == "imap":
+        imap = IMAPClient(settings_instance=settings)
+        return imap.create_reply_draft(message_id=message_id, body=body)
+    else:
+        gmail = GmailClient(settings_instance=settings)
+        return gmail.create_reply_draft(message_id=message_id, body=body)
 
 @mcp.tool()
-def send_email_reply(message_id: str, body: str, profile: str = "default") -> Dict[str, Any]:
+def send_email_reply(message_id: str, body: str, account_type: Optional[str] = None, profile: str = "default") -> Dict[str, Any]:
     """
-    Sends a reply directly to an existing email (by internal Gmail ID or global Message-ID) in Gmail.
+    Sends a reply directly to an existing email (by internal Gmail ID/IMAP UID or global Message-ID).
 
-    :param message_id: The specific Message-ID (RFC 2822 header) or Gmail internal ID of the email to reply to.
+    :param message_id: The specific Message-ID (RFC 2822 header), Gmail internal ID, or IMAP UID of the email to reply to.
     :param body: The reply text body content.
+    :param account_type: Optional override. Either "gmail" or "imap". If not provided, it will auto-detect from the local triage database cache.
     :param profile: The dynamic profile environment to load (default: "default").
     :return: A dictionary containing the sent message metadata.
     """
-    _, _, settings = get_resources(profile)
-    gmail = GmailClient(settings_instance=settings)
-    return gmail.send_reply(message_id=message_id, body=body)
+    db, _, settings = get_resources(profile)
+    
+    # Auto-detect account type
+    detected_type = "gmail"
+    if account_type:
+        detected_type = account_type.lower()
+    else:
+        cached = db.get_cached_result(message_id)
+        if cached:
+            account = cached.get("account", "")
+            if account == settings.imap_login:
+                detected_type = "imap"
+
+    if detected_type == "imap":
+        imap = IMAPClient(settings_instance=settings)
+        return imap.send_reply(message_id=message_id, body=body)
+    else:
+        gmail = GmailClient(settings_instance=settings)
+        return gmail.send_reply(message_id=message_id, body=body)
 
 @mcp.tool()
 def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:

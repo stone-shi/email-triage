@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     imap_login: str = "your_email@domain.com"
     imap_password: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_IMAP_PASSWORD", ""))
 
+    smtp_host: str = "smtp.zoho.com"
+    smtp_port: int = 465
+    smtp_login: Optional[str] = None
+    smtp_password: Optional[str] = None
+
+    @property
+    def active_smtp_login(self) -> str:
+        return self.smtp_login if self.smtp_login else self.imap_login
+
+    @property
+    def active_smtp_password(self) -> str:
+        return self.smtp_password if self.smtp_password else self.imap_password
+
     triage: TriageSettings = Field(default_factory=TriageSettings)
 
     triage_base_url: str = "https://your-llm-proxy.com/v1"

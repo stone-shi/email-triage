@@ -438,6 +438,49 @@ def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: st
 
 
 @mcp.tool()
+def create_new_draft(to: str, subject: str, body: str, profile: str = "default") -> Dict[str, Any]:
+    """
+    Creates a new draft email in Gmail.
+
+    :param to: The recipient's email address.
+    :param subject: The subject of the email.
+    :param body: The text body content of the email.
+    :param profile: The dynamic profile environment to load (default: "default").
+    :return: A dictionary containing the created draft metadata from Gmail.
+    """
+    _, _, settings = get_resources(profile)
+    gmail = GmailClient(settings_instance=settings)
+    return gmail.create_draft(to=to, subject=subject, body=body)
+
+@mcp.tool()
+def create_draft_reply(message_id: str, body: str, profile: str = "default") -> Dict[str, Any]:
+    """
+    Creates a draft reply to an existing email (by internal Gmail ID or global Message-ID) in Gmail.
+
+    :param message_id: The specific Message-ID (RFC 2822 header) or Gmail internal ID of the email to reply to.
+    :param body: The reply text body content.
+    :param profile: The dynamic profile environment to load (default: "default").
+    :return: A dictionary containing the created draft metadata.
+    """
+    _, _, settings = get_resources(profile)
+    gmail = GmailClient(settings_instance=settings)
+    return gmail.create_reply_draft(message_id=message_id, body=body)
+
+@mcp.tool()
+def send_email_reply(message_id: str, body: str, profile: str = "default") -> Dict[str, Any]:
+    """
+    Sends a reply directly to an existing email (by internal Gmail ID or global Message-ID) in Gmail.
+
+    :param message_id: The specific Message-ID (RFC 2822 header) or Gmail internal ID of the email to reply to.
+    :param body: The reply text body content.
+    :param profile: The dynamic profile environment to load (default: "default").
+    :return: A dictionary containing the sent message metadata.
+    """
+    _, _, settings = get_resources(profile)
+    gmail = GmailClient(settings_instance=settings)
+    return gmail.send_reply(message_id=message_id, body=body)
+
+@mcp.tool()
 def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:
     """
     Searches the live Gmail and IMAP mailboxes for emails matching the query.

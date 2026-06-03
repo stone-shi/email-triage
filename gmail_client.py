@@ -272,3 +272,185 @@ class GmailClient:
         except Exception as e:
             logger.error("Failed to search Gmail messages: %s", e, exc_info=True)
             return []
+
+    def _find_message(self, message_id_or_id: str) -> Dict[str, Any]:
+        """
+        Finds a message by its internal ID or its RFC 2822 Message-ID.
+        Returns the message metadata.
+        """
+        if not self.service:
+            raise ValueError("Gmail service client is not initialized.")
+        
+        # 1. Try treating it as internal ID first
+        try:
+            msg = self.service.users().messages().get(
+                userId='me', id=message_id_or_id, format='metadata',
+                metadataHeaders=['Message-ID', 'From', 'Subject', 'Date', 'Reply-To']
+            ).execute()
+            return msg
+        except Exception:
+            # 2. Try querying by RFC Message-ID
+            query = f"rfc822msgid:{message_id_or_id}"
+            response = self.service.users().messages().list(userId='me', q=query).execute()
+            messages = response.get('messages', [])
+            if not messages and not message_id_or_id.startswith("<"):
+                query = f"rfc822msgid:<{message_id_or_id}>"
+                response = self.service.users().messages().list(userId='me', q=query).execute()
+                messages = response.get('messages', [])
+            
+            if not messages:
+                raise ValueError(f"Message not found in Gmail with ID or Message-ID: {message_id_or_id}")
+            
+            msg = self.service.users().messages().get(
+                userId='me', id=messages[0]['id'], format='metadata',
+                metadataHeaders=['Message-ID', 'From', 'Subject', 'Date', 'Reply-To']
+            ).execute()
+            return msg
+
+    def create_draft(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        thread_id: Optional[str] = None,
+        in_reply_to: Optional[str] = None,
+        references: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Creates a draft in Gmail.
+        """
+        if not self.service:
+            raise ValueError("Gmail service client is not initialized.")
+        try:
+            from email.message import EmailMessage
+            import base64
+
+            mime_msg = EmailMessage()
+            mime_msg["To"] = to
+            mime_msg["Subject"] = subject
+            mime_msg["From"] = self.settings.gmail_account
+            mime_msg.set_content(body)
+
+            if in_reply_to:
+                mime_msg["In-Reply-To"] = in_reply_to
+            if references:
+                mime_msg["References"] = references
+
+            raw_bytes = mime_msg.as_bytes()
+            raw_b64 = base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
+
+            draft_body = {
+                "message": {
+                    "raw": raw_b64
+                }
+            }
+            if thread_id:
+                draft_body["message"]["threadId"] = thread_id
+
+            logger.info("Creating Gmail draft (To: %s, Subject: %s)", to, subject)
+            draft = self.service.users().drafts().create(userId="me", body=draft_body).execute()
+            return draft
+        except Exception as e:
+            logger.error("Failed to create Gmail draft: %s", e, exc_info=True)
+            raise
+
+    def create_reply_draft(self, message_id: str, body: str) -> Dict[str, Any]:
+        """
+        Creates a draft reply to an existing message.
+        """
+        parent_msg = self._find_message(message_id)
+        thread_id = parent_msg.get('threadId')
+        
+        headers = parent_msg.get('payload', {}).get('headers', [])
+        header_dict = {h['name'].lower(): h['value'] for h in headers}
+        
+        to = header_dict.get('reply-to') or header_dict.get('from')
+        if not to:
+            raise ValueError(f"Could not identify the sender of message {message_id}")
+            
+        subject = header_dict.get('subject', '')
+        if subject and not subject.lower().startswith('re:'):
+            subject = f"Re: {subject}"
+        elif not subject:
+            subject = "Re: (No Subject)"
+            
+        parent_rfc_msg_id = header_dict.get('message-id')
+        references = header_dict.get('references', '')
+        
+        if parent_rfc_msg_id:
+            if references:
+                references = f"{references} {parent_rfc_msg_id}"
+            else:
+                references = parent_rfc_msg_id
+                
+        return self.create_draft(
+            to=to,
+            subject=subject,
+            body=body,
+            thread_id=thread_id,
+            in_reply_to=parent_rfc_msg_id,
+            references=references
+        )
+
+    def send_reply(self, message_id: str, body: str) -> Dict[str, Any]:
+        """
+        Sends a reply to an existing message directly.
+        """
+        if not self.service:
+            raise ValueError("Gmail service client is not initialized.")
+        try:
+            parent_msg = self._find_message(message_id)
+            thread_id = parent_msg.get('threadId')
+            
+            headers = parent_msg.get('payload', {}).get('headers', [])
+            header_dict = {h['name'].lower(): h['value'] for h in headers}
+            
+            to = header_dict.get('reply-to') or header_dict.get('from')
+            if not to:
+                raise ValueError(f"Could not identify the sender of message {message_id}")
+                
+            subject = header_dict.get('subject', '')
+            if subject and not subject.lower().startswith('re:'):
+                subject = f"Re: {subject}"
+            elif not subject:
+                subject = "Re: (No Subject)"
+                
+            parent_rfc_msg_id = header_dict.get('message-id')
+            references = header_dict.get('references', '')
+            
+            if parent_rfc_msg_id:
+                if references:
+                    references = f"{references} {parent_rfc_msg_id}"
+                else:
+                    references = parent_rfc_msg_id
+
+            from email.message import EmailMessage
+            import base64
+
+            mime_msg = EmailMessage()
+            mime_msg["To"] = to
+            mime_msg["Subject"] = subject
+            mime_msg["From"] = self.settings.gmail_account
+            mime_msg.set_content(body)
+
+            if parent_rfc_msg_id:
+                mime_msg["In-Reply-To"] = parent_rfc_msg_id
+            if references:
+                mime_msg["References"] = references
+
+            raw_bytes = mime_msg.as_bytes()
+            raw_b64 = base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
+
+            body_data = {
+                "raw": raw_b64
+            }
+            if thread_id:
+                body_data["threadId"] = thread_id
+
+            logger.info("Sending Gmail reply to message %s (To: %s)", message_id, to)
+            sent_msg = self.service.users().messages().send(userId="me", body=body_data).execute()
+            return sent_msg
+        except Exception as e:
+            logger.error("Failed to send Gmail reply: %s", e, exc_info=True)
+            raise
+

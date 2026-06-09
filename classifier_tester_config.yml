@@ -1,0 +1,48 @@
+# Configuration for testing the email classifier only
+
+# Active judger mode: "baseline" or "llm". Defaults to "baseline".
+# - "baseline": Compares the classifier's predictions against a baseline JSON file (e.g. human-reviewed gold standard).
+# - "llm": Calls a live LLM to audit/judge the classifier's predictions.
+judger: "baseline"
+
+# Tester model configurations prepopulated with examples from auto_rater config.
+# Can be an LLM-based classifier (triage_type: "llm") or a TEI-based classifier (triage_type: "tei").
+test_configurations:
+  - name: "tei_cpu"
+    triage_type: "tei"
+    tei_url: "http://10.100.0.50:8077/predict"
+    
+  - name: "tei_gpu"
+    triage_type: "tei"
+    tei_url: "http://10.100.0.50:8078/predict"
+    
+  - name: "baseline_deepseek_flash"
+    triage_type: "llm"
+    # Optional overrides; if omitted, defaults to project environment / settings
+    # url: "https://api.deepseek.com/v1"
+    # api_key: "DEEPSEEK_API_KEY"
+    model: "deepseek/deepseek-v4-flash"
+    
+  - name: "baseline_gemini_flash_lite"
+    triage_type: "llm"
+    model: "gemini/gemini-3.1-flash-lite-preview"
+    
+  - name: "baseline_gemini_pro"
+    triage_type: "llm"
+    model: "gemini/gemini-3.1-pro-preview"
+    
+  - name: "baseline_deepseek_pro"
+    triage_type: "llm"
+    model: "deepseek/deepseek-v4-pro"
+
+# Judge configuration settings.
+judge:
+  # Used if judger is "llm".
+  url: "https://api.gemini.com/v1"
+  # api_key: "YOUR_GEMINI_API_KEY"
+  model: "gemini/gemini-3.1-pro-preview"
+  
+  # Used if judger is "baseline".
+  # Specifies the path to the baseline classification results.
+  #baseline_json_path: "auto_rater_data/auto_rater_results_baseline_platinum_human.json"
+  baseline_json_path: "auto_rater_data/auto_rater_results_baseline_deepseek_pro.json"

@@ -104,58 +104,120 @@ class GmailClient:
             logger.error("Gmail authentication failure: %s", e, exc_info=True)
             raise
 
-    def fetch_unread_messages(self, query: str = "is:unread") -> List[Dict[str, Any]]:
+    def _fetch_metadata_batch(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Helper method to fetch metadata for multiple messages using Gmail HTTP Batching.
+        Reduces roundtrips by batching up to 100 requests per batch call.
+        """
+        if not self.service or not messages:
+            return []
+
+        results: List[Dict[str, Any]] = []
+
+        def batch_callback(request_id, response, exception):
+            if exception is not None:
+                logger.error("Failed to fetch message metadata: %s", exception)
+                return
+            try:
+                headers = response.get('payload', {}).get('headers', [])
+                header_dict = {h['name']: h['value'] for h in headers}
+
+                msg_id = response.get('id')
+                message_id = header_dict.get('Message-ID', msg_id)
+                from_str = header_dict.get('From', 'Unknown Sender')
+                subject_str = header_dict.get('Subject', '(No Subject)')
+                date_str = header_dict.get('Date', '')
+                snippet_str = response.get('snippet', '')
+
+                results.append({
+                    'id': msg_id,
+                    'message_id': message_id,
+                    'sender': from_str,
+                    'subject': subject_str,
+                    'date': date_str,
+                    'snippet': snippet_str,
+                    'account': self.settings.gmail_account,
+                    'raw_meta': response
+                })
+            except Exception as callback_err:
+                logger.error("Error parsing batch response metadata: %s", callback_err)
+
+        chunk_size = 100
+        for i in range(0, len(messages), chunk_size):
+            chunk = messages[i:i + chunk_size]
+            try:
+                batch = self.service.new_batch_http_request(callback=batch_callback)
+                for msg in chunk:
+                    batch.add(self.service.users().messages().get(
+                        userId='me', id=msg['id'], format='metadata',
+                        metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
+                    ))
+                batch.execute()
+            except Exception as e:
+                logger.error("Failed to execute Gmail metadata batch: %s. Falling back to sequential...", e)
+                # Fallback to sequential fetching for this chunk
+                for msg in chunk:
+                    try:
+                        msg_meta = self.service.users().messages().get(
+                            userId='me', id=msg['id'], format='metadata',
+                            metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
+                        ).execute()
+                        headers = msg_meta.get('payload', {}).get('headers', [])
+                        header_dict = {h['name']: h['value'] for h in headers}
+                        results.append({
+                            'id': msg['id'],
+                            'message_id': header_dict.get('Message-ID', msg['id']),
+                            'sender': header_dict.get('From', 'Unknown Sender'),
+                            'subject': header_dict.get('Subject', '(No Subject)'),
+                            'date': header_dict.get('Date', ''),
+                            'snippet': msg_meta.get('snippet', ''),
+                            'account': self.settings.gmail_account,
+                            'raw_meta': msg_meta
+                        })
+                    except Exception as fallback_err:
+                        logger.error("Sequential fallback failed for message %s: %s", msg['id'], fallback_err)
+
+        # Sort results in the same order as input messages to preserve ordering
+        msg_id_to_index = {msg['id']: idx for idx, msg in enumerate(messages)}
+        results.sort(key=lambda r: msg_id_to_index.get(r['id'], 99999))
+
+        return results
+
+    def fetch_unread_messages(
+        self,
+        query: str = "is:unread",
+        max_results: Optional[int] = None,
+        days: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """
         Fetches metadata for unread messages matching the query.
-        Uses format='metadata' for token/bandwidth efficiency.
+        Uses format='metadata' and batch requests for efficiency.
         """
         if not self.service:
             logger.error("Gmail service client is not initialized.")
             return []
 
-        results: List[Dict[str, Any]] = []
         try:
+            if days is not None and days > 0:
+                query = f"{query} newer_than:{days}d"
+
             logger.info("Listing Gmail messages with query: '%s'", query)
-            response = self.service.users().messages().list(userId='me', q=query).execute()
+            list_params = {'userId': 'me', 'q': query}
+            if max_results is not None:
+                list_params['maxResults'] = min(max_results, 500)
+
+            response = self.service.users().messages().list(**list_params).execute()
             messages = response.get('messages', [])
 
             if not messages:
                 logger.info("No new unread Gmail messages found matching query.")
                 return []
 
-            logger.info("Found %d unread messages. Fetching individual metadata...", len(messages))
-            for msg in messages:
-                msg_id = msg['id']
-                try:
-                    msg_meta = self.service.users().messages().get(
-                        userId='me', id=msg_id, format='metadata',
-                        metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
-                    ).execute()
+            if max_results is not None:
+                messages = messages[:max_results]
 
-                    headers = msg_meta.get('payload', {}).get('headers', [])
-                    header_dict = {h['name']: h['value'] for h in headers}
-
-                    message_id = header_dict.get('Message-ID', msg_id)
-                    from_str = header_dict.get('From', 'Unknown Sender')
-                    subject_str = header_dict.get('Subject', '(No Subject)')
-                    date_str = header_dict.get('Date', '')
-                    snippet_str = msg_meta.get('snippet', '')
-
-                    results.append({
-                        'id': msg_id,
-                        'message_id': message_id,
-                        'sender': from_str,
-                        'subject': subject_str,
-                        'date': date_str,
-                        'snippet': snippet_str,
-                        'account': self.settings.gmail_account,
-                        'raw_meta': msg_meta
-                    })
-                except Exception as inner_e:
-                    logger.error("Failed to fetch metadata for message %s: %s", msg_id, inner_e)
-                    continue
-
-            return results
+            logger.info("Found %d unread messages. Fetching metadata using HTTP batching...", len(messages))
+            return self._fetch_metadata_batch(messages)
         except Exception as e:
             logger.error("Failed to list or fetch Gmail messages: %s", e, exc_info=True)
             return []
@@ -220,13 +282,12 @@ class GmailClient:
     def search_messages(self, query: str) -> List[Dict[str, Any]]:
         """
         Searches Gmail messages matching a specific query.
-        Uses format='metadata' for token/bandwidth efficiency.
+        Uses format='metadata' and batch requests for efficiency.
         """
         if not self.service:
             logger.error("Gmail service client is not initialized.")
             return []
 
-        results: List[Dict[str, Any]] = []
         try:
             logger.info("Searching Gmail messages with query: '%s'", query)
             response = self.service.users().messages().list(userId='me', q=query).execute()
@@ -236,39 +297,8 @@ class GmailClient:
                 logger.info("No Gmail messages found matching search query.")
                 return []
 
-            logger.info("Found %d matching messages. Fetching metadata...", len(messages))
-            for msg in messages:
-                msg_id = msg['id']
-                try:
-                    msg_meta = self.service.users().messages().get(
-                        userId='me', id=msg_id, format='metadata',
-                        metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
-                    ).execute()
-
-                    headers = msg_meta.get('payload', {}).get('headers', [])
-                    header_dict = {h['name']: h['value'] for h in headers}
-
-                    message_id = header_dict.get('Message-ID', msg_id)
-                    from_str = header_dict.get('From', 'Unknown Sender')
-                    subject_str = header_dict.get('Subject', '(No Subject)')
-                    date_str = header_dict.get('Date', '')
-                    snippet_str = msg_meta.get('snippet', '')
-
-                    results.append({
-                        'id': msg_id,
-                        'message_id': message_id,
-                        'sender': from_str,
-                        'subject': subject_str,
-                        'date': date_str,
-                        'snippet': snippet_str,
-                        'account': self.settings.gmail_account,
-                        'raw_meta': msg_meta
-                    })
-                except Exception as inner_e:
-                    logger.error("Failed to fetch metadata for search message %s: %s", msg_id, inner_e)
-                    continue
-
-            return results
+            logger.info("Found %d matching messages. Fetching metadata using HTTP batching...", len(messages))
+            return self._fetch_metadata_batch(messages)
         except Exception as e:
             logger.error("Failed to search Gmail messages: %s", e, exc_info=True)
             return []

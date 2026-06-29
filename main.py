@@ -483,11 +483,7 @@ def main() -> None:
         if args.human:
             logger.info("Initializing Gmail Client Layer...")
         gmail = GmailClient(settings_instance=settings)
-        gmail_emails = gmail.fetch_unread_messages()
-        if args.days is not None:
-            gmail_emails = filter_emails_by_days(gmail_emails, args.days)
-        if args.max is not None:
-            gmail_emails = gmail_emails[:args.max]
+        gmail_emails = gmail.fetch_unread_messages(max_results=args.max, days=args.days)
         process_account_emails(gmail_emails, gmail, engine, db, stats, run_results, args.human, settings_instance=settings)
     except Exception as e:
         if args.human:
@@ -498,11 +494,7 @@ def main() -> None:
         if args.human:
             logger.info("Initializing IMAP Client Layer...")
         imap = IMAPClient(settings_instance=settings)
-        imap_emails = imap.fetch_unread_headers()
-        if args.days is not None:
-            imap_emails = filter_emails_by_days(imap_emails, args.days)
-        if args.max is not None:
-            imap_emails = imap_emails[:args.max]
+        imap_emails = imap.fetch_unread_headers(max_results=args.max, days=args.days)
         process_account_emails(imap_emails, imap, engine, db, stats, run_results, args.human, settings_instance=settings)
     except Exception as e:
         if args.human:

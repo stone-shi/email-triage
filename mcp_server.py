@@ -400,8 +400,7 @@ def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: st
     # 1. Fetch Gmail unread emails
     try:
         gmail = GmailClient(settings_instance=settings)
-        gmail_emails = gmail.fetch_unread_messages()
-        gmail_emails = filter_emails_by_days(gmail_emails, days)[:max_per_source]
+        gmail_emails = gmail.fetch_unread_messages(max_results=max_per_source, days=days)
         process_emails(gmail_emails, gmail)
     except Exception as e:
         logger.error("Error processing Gmail inside MCP tool: %s", e)
@@ -409,8 +408,7 @@ def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: st
     # 2. Fetch IMAP unread emails
     try:
         imap = IMAPClient(settings_instance=settings)
-        imap_emails = imap.fetch_unread_headers()
-        imap_emails = filter_emails_by_days(imap_emails, days)[:max_per_source]
+        imap_emails = imap.fetch_unread_headers(max_results=max_per_source, days=days)
         process_emails(imap_emails, imap)
     except Exception as e:
         logger.error("Error processing IMAP inside MCP tool: %s", e)

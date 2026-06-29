@@ -14,9 +14,14 @@ class IMAPClient:
         self.login_user = self.settings.imap_login
         self.password = self.settings.imap_password
 
-    def fetch_unread_headers(self) -> List[Dict[str, Any]]:
+    def fetch_unread_headers(
+        self,
+        max_results: Optional[int] = None,
+        days: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """
         Connects to IMAP server and fetches headers only for unseen emails.
+        Applies date filtering and limit constraints on the server side to prevent timeouts.
         """
         results: List[Dict[str, Any]] = []
         try:
@@ -24,7 +29,19 @@ class IMAPClient:
             with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
                 logger.info("Successfully logged into IMAP account. Scanning UNSEEN messages...")
                 
-                messages = mailbox.fetch(AND(seen=False), headers_only=True, mark_seen=False)
+                from datetime import date, timedelta
+                if days is not None and days > 0:
+                    cutoff_date = date.today() - timedelta(days=days)
+                    criteria = AND(seen=False, date_gte=cutoff_date)
+                else:
+                    criteria = AND(seen=False)
+
+                messages = mailbox.fetch(
+                    criteria,
+                    headers_only=True,
+                    mark_seen=False,
+                    limit=max_results
+                )
                 
                 for msg in messages:
                     message_id = msg.headers.get('message-id', [f"imap_{msg.uid}"])[0]

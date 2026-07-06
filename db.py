@@ -1,6 +1,6 @@
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any
 from config import settings
@@ -217,7 +217,7 @@ class EmailDB:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                processed_at = datetime.utcnow().isoformat()
+                processed_at = datetime.now(tz=timezone.utc).isoformat()
                 
                 # Convert boolean inputs to integer for SQLite compatibility
                 tei_enabled_int = 1 if tei_enabled is True else (0 if tei_enabled is False else None)
@@ -249,7 +249,7 @@ class EmailDB:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                timestamp = datetime.utcnow().isoformat()
+                timestamp = datetime.now(tz=timezone.utc).isoformat()
                 cursor.execute("""
                     INSERT INTO token_logs (event, model, tokens_used, timestamp)
                     VALUES (?, ?, ?, ?)

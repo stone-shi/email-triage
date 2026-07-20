@@ -78,24 +78,30 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     http_client = httpx.Client(timeout=1800.0)
     run_results: List[Dict[str, Any]] = []
     
-    # Dynamically override TEI settings for this specific configuration profile run
+    # Dynamically override reranker (TEI) settings for this specific configuration profile run
     old_triage_type = getattr(settings.triage, "triage_type", "llm")
     old_tei_url = getattr(settings.triage, "tei_url", "")
+    old_tei_model = getattr(settings.triage, "tei_model", "")
+    old_tei_api_key = getattr(settings.triage, "tei_api_key", "")
     old_tei_router_enabled = getattr(settings.triage, "tei_router_enabled", False)
     old_tei_signal_threshold = getattr(settings.triage, "tei_signal_threshold", 0.8)
     old_tei_noise_threshold = getattr(settings.triage, "tei_noise_threshold", 0.8)
-    
+
     if "triage_type" in config:
         settings.triage.triage_type = config["triage_type"]
     if "tei_url" in config:
         settings.triage.tei_url = config["tei_url"]
+    if "tei_model" in config:
+        settings.triage.tei_model = config["tei_model"]
+    if "tei_api_key" in config:
+        settings.triage.tei_api_key = config["tei_api_key"]
     if "tei_router_enabled" in config:
         settings.triage.tei_router_enabled = config["tei_router_enabled"]
     if "tei_signal_threshold" in config:
         settings.triage.tei_signal_threshold = config["tei_signal_threshold"]
     if "tei_noise_threshold" in config:
         settings.triage.tei_noise_threshold = config["tei_noise_threshold"]
-        
+
     # Initialize triage engine for static filtering logic (Level 0)
     dummy_db = EmailDB(db_path=workspace_dir / "email_cache.db")
     engine = EmailTriageEngine(dummy_db)
@@ -361,9 +367,14 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     with open(output_file, "w", encoding="utf-8") as out_f:
         json.dump(output_payload, out_f, indent=2, ensure_ascii=False)
         
-    # Restore old TEI settings to preserve clean state across profile loop iterations
+    # Restore old reranker (TEI) settings to preserve clean state across profile loop iterations
     settings.triage.triage_type = old_triage_type
     settings.triage.tei_url = old_tei_url
+    settings.triage.tei_model = old_tei_model
+    settings.triage.tei_api_key = old_tei_api_key
+    settings.triage.tei_router_enabled = old_tei_router_enabled
+    settings.triage.tei_signal_threshold = old_tei_signal_threshold
+    settings.triage.tei_noise_threshold = old_tei_noise_threshold
         
     logger.info("Finished test run for '%s'. Results saved pretty to %s", config_name, output_file)
 

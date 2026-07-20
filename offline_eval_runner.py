@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx
 
 from config import settings
-from triage import EmailTriageEngine
+from triage import EmailTriageEngine, RERANK_IMPORTANT_ANCHOR, RERANK_NOISE_ANCHOR
 from db import EmailDB
 
 logging.basicConfig(
@@ -224,23 +224,37 @@ def run_baseline_triage(
     # 4. Level 1 Classification
     result["level_1_run"] = True
     
-    # If baseline specifies a different triage type (e.g., TEI classifier sequence)
+    # If baseline specifies a different triage type (e.g., reranker classifier sequence)
     if config.get("triage_type", "llm") == "tei":
-        tei_url = config.get("tei_url", "http://10.100.0.50:8077/predict")
-        tei_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
+        tei_url = config.get("tei_url", settings.triage.tei_url)
+        tei_model = config.get("tei_model", settings.triage.tei_model)
+        tei_api_key = config.get("tei_api_key", settings.triage.tei_api_key)
+        query_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
+        tei_headers = {"Content-Type": "application/json"}
+        if tei_api_key:
+            tei_headers["Authorization"] = f"Bearer {tei_api_key}"
         try:
-            resp = http_client.post(tei_url, json={"inputs": tei_text})
+            resp = http_client.post(
+                tei_url,
+                headers=tei_headers,
+                json={"model": tei_model, "query": query_text, "documents": [RERANK_IMPORTANT_ANCHOR, RERANK_NOISE_ANCHOR]}
+            )
             resp.raise_for_status()
-            predictions = resp.json()
-            winning_pred = max(predictions, key=lambda x: x.get("score", 0.0))
-            winning_label = winning_pred.get("label", "").lower()
-            winning_score = winning_pred.get("score", 1.0)
-            is_important = ("entailment" in winning_label and "not_" not in winning_label) or "important" in winning_label
-            
+            results = resp.json().get("results", [])
+
+            scores = {0: 0.0, 1: 0.0}
+            for r in results:
+                idx = r.get("index")
+                if idx in scores:
+                    scores[idx] = r.get("relevance_score", 0.0)
+            important_score, noise_score = scores[0], scores[1]
+            is_important = important_score >= noise_score
+
             suggested_level = 2 if is_important else 1
-            reason = f"TEI Classifier resolved winning label: '{winning_label}'"
-            tag = "notification" if not is_important else "personal"
-            
+            winning_score = important_score if is_important else noise_score
+            reason = f"Rerank Classifier resolved importance={important_score:.4f} noise={noise_score:.4f}"
+            tag = "personal" if is_important else "notification"
+
             result["triage_level"] = suggested_level
             result["reason"] = reason
             result["score"] = winning_score
@@ -248,7 +262,7 @@ def run_baseline_triage(
             result["level_1_score"] = winning_score
         except Exception as e:
             result["triage_level"] = 2
-            result["reason"] = f"TEI Classifier prediction failed: {e}"
+            result["reason"] = f"Rerank Classifier prediction failed: {e}"
             result["score"] = 1.0
             result["tag"] = "personal"
             result["level_1_score"] = 1.0

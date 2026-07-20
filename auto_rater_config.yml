@@ -1,9 +1,10 @@
 test_configurations:
   - name: "tei_classifier_pair"
     triage_type: "tei"
-    triage_model: "local-tei-bge-nli"
+    triage_model: "localai/qwen3-reranker-0.6b"
     summary_model: "deepseek/deepseek-v4-flash"
-    tei_url: "http://10.100.0.50:8077/predict"
+    tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
+    tei_model: "localai/qwen3-reranker-0.6b"
     tei_router_enabled: false
     tei_signal_threshold: 0.85
     tei_noise_threshold: 0.85
@@ -40,14 +41,16 @@ test_configurations:
   - name: "baseline_deepseek_flash_routed"
     triage_model: "deepseek/deepseek-v4-flash"
     summary_model: "deepseek/deepseek-v4-flash"
-    tei_url: "http://10.100.0.50:8077/predict"
+    tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
+    tei_model: "localai/qwen3-reranker-0.6b"
     tei_router_enabled: true
     tei_signal_threshold: 0.85
     tei_noise_threshold: 0.85
   - name: "baseline_deepseek_flash_routed_60"
     triage_model: "deepseek/deepseek-v4-flash"
     summary_model: "deepseek/deepseek-v4-flash"
-    tei_url: "http://10.100.0.50:8077/predict"
+    tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
+    tei_model: "localai/qwen3-reranker-0.6b"
     tei_router_enabled: true
     tei_signal_threshold: 0.6
     tei_noise_threshold: 0.6

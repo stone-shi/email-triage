@@ -6,16 +6,15 @@
 judger: "baseline"
 
 # Tester model configurations prepopulated with examples from auto_rater config.
-# Can be an LLM-based classifier (triage_type: "llm") or a TEI-based classifier (triage_type: "tei").
+# Can be an LLM-based classifier (triage_type: "llm") or a reranker-based classifier (triage_type: "tei",
+# calling a /rerank endpoint - tei_api_key defaults to EMAIL_TRIAGE_TEI_API_KEY / project settings if omitted).
 test_configurations:
-  - name: "tei_cpu"
+  - name: "qwen3-reranker-0.6b"
     triage_type: "tei"
-    tei_url: "http://10.100.0.50:8077/predict"
-    
-  - name: "tei_gpu"
-    triage_type: "tei"
-    tei_url: "http://10.100.0.50:8078/predict"
-    
+    tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
+    tei_model: "localai/qwen3-reranker-0.6b"
+    # tei_api_key: "YOUR_RERANK_API_KEY"
+
   - name: "baseline_deepseek_flash"
     triage_type: "llm"
     # Optional overrides; if omitted, defaults to project environment / settings

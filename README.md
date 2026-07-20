@@ -29,7 +29,7 @@ python3 -m venv venv
 ### 2. Local Configuration (`.env`)
 Create a `.env` file in the root directory to manage runtime configurations. All options are driveable from the environment without code tweaks.
 
-Note that LLM model definitions (i.e. which models to use) reside inside `config.yml`. The `.env` file specifies provider base URLs and API keys, allowing you to use different endpoints/providers for Triage (Level 1) and Summarization (Level 2):
+Note that LLM model definitions (i.e. which models to use) reside inside `data/config.yml` (excluded from the Docker image build via `.dockerignore` so it can be bind-mounted instead, e.g. `./data:/app/data` in `docker-compose.yml`). The `.env` file specifies provider base URLs and API keys, allowing you to use different endpoints/providers for Triage (Level 1) and Summarization (Level 2):
 
 ```ini
 # Decoupled LLM Provider Configurations
@@ -38,8 +38,10 @@ EMAIL_TRIAGE_TRIAGE_API_KEY=your_api_key_here
 EMAIL_TRIAGE_SUMMARY_BASE_URL=https://your-llm-proxy.com/v1
 EMAIL_TRIAGE_SUMMARY_API_KEY=your_api_key_here
 
-# TEI Sequence Classifier URL
-EMAIL_TRIAGE_TEI_URL=http://10.100.0.50:8077/predict
+# Reranker (semantic router) configuration - a /rerank endpoint, e.g. TEI or an OpenAI-compatible proxy
+EMAIL_TRIAGE_TEI_URL=https://your-rerank-proxy.com/v1/rerank
+EMAIL_TRIAGE_TEI_MODEL=localai/qwen3-reranker-0.6b
+EMAIL_TRIAGE_TEI_API_KEY=your_api_key_here
 
 # Gmail OAuth Parameters and File Paths
 EMAIL_TRIAGE_GMAIL_CREDENTIALS_PATH=credentials.json

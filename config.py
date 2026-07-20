@@ -8,7 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class TriageSettings(BaseModel):
     confidence_threshold: float = 0.8
     triage_type: str = "llm"
-    tei_url: str = "http://10.100.0.50:8077/predict"
+    tei_url: str = "https://omniroute.local.shifamily.com/v1/rerank"
+    tei_model: str = "localai/qwen3-reranker-0.6b"
+    tei_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_TEI_API_KEY", ""))
     tei_router_enabled: bool = False
     tei_noise_threshold: float = 0.999
     tei_signal_threshold: float = 0.95
@@ -63,7 +65,8 @@ class Settings(BaseSettings):
     triage_model: str = "deepseek/deepseek-v4-flash"
     summary_model: str = "deepseek/deepseek-v4-pro"
     log_level: str = "INFO"
-    tei_url: str = "http://10.100.0.50:8077/predict"
+    tei_url: str = "https://omniroute.local.shifamily.com/v1/rerank"
+    tei_model: str = "localai/qwen3-reranker-0.6b"
 
     # MCP Server settings
     mcp_transport: str = "stdio"
@@ -74,6 +77,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
     triage_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_TRIAGE_API_KEY", os.getenv("EMAIL_TRIAGE_LLM_API_KEY", "")))
     summary_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_SUMMARY_API_KEY", os.getenv("EMAIL_TRIAGE_LLM_API_KEY", "")))
+    tei_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_TEI_API_KEY", ""))
 
     @property
     def llm_base_url(self) -> str:
@@ -87,6 +91,10 @@ class Settings(BaseSettings):
     def sync_triage_settings(self) -> "Settings":
         if hasattr(self, "tei_url") and self.tei_url:
             self.triage.tei_url = self.tei_url
+        if hasattr(self, "tei_model") and self.tei_model:
+            self.triage.tei_model = self.tei_model
+        if hasattr(self, "tei_api_key") and self.tei_api_key:
+            self.triage.tei_api_key = self.tei_api_key
         return self
 
     def load_from_yaml(self, yaml_path: Optional[Path] = None, env_file: Optional[Path] = None) -> None:
@@ -142,6 +150,12 @@ class Settings(BaseSettings):
                 if "tei_url" in triage_data and should_apply("EMAIL_TRIAGE_TEI_URL"):
                     self.triage.tei_url = triage_data["tei_url"]
                     self.tei_url = triage_data["tei_url"]
+                if "tei_model" in triage_data and should_apply("EMAIL_TRIAGE_TEI_MODEL"):
+                    self.triage.tei_model = triage_data["tei_model"]
+                    self.tei_model = triage_data["tei_model"]
+                if "tei_api_key" in triage_data and should_apply("EMAIL_TRIAGE_TEI_API_KEY"):
+                    self.triage.tei_api_key = triage_data["tei_api_key"]
+                    self.tei_api_key = triage_data["tei_api_key"]
                 if "tei_router_enabled" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_ROUTER_ENABLED"):
                     self.triage.tei_router_enabled = bool(triage_data["tei_router_enabled"])
                 if "tei_noise_threshold" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_NOISE_THRESHOLD"):
@@ -185,7 +199,7 @@ class Settings(BaseSettings):
         s.gmail_token_path = profile_dir / "token.json"
         
         # Load global config first (inheritance base)
-        s.load_from_yaml(workspace_root / "config.yml", env_file=env_file)
+        s.load_from_yaml(workspace_root / "data" / "config.yml", env_file=env_file)
         
         # Overwrite with global local config if it exists
         global_local_yaml = workspace_root / "profiles" / "config-local.yml"

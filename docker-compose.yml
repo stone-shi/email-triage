@@ -12,6 +12,7 @@ services:
       - "4003:8000"
     volumes:
       - email-triage-mcp-config:/app/profiles
+      - ./data:/app/data
     restart: unless-stopped
     command: ["python", "mcp_server.py"]
     networks:

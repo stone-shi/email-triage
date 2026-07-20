@@ -36,28 +36,42 @@ def extract_json(text: str) -> str:
     text = text.replace("\\'", "'")
     return text
 
-def run_tei_classifier(tei_url: str, sender: str, subject: str, snippet: str, http_client: httpx.Client) -> Tuple[int, str, float, str]:
-    """Runs a TEI-based sequence classifier prediction."""
-    tei_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
+RERANK_IMPORTANT_ANCHOR = "An urgent personal message from a specific person requiring your direct reply, decision, or action, such as a work request, deadline, bill, or critical account issue."
+RERANK_NOISE_ANCHOR = "An automated system notification, media download alert, promotional marketing email, newsletter, or subscription update that does not require any reply or action from you."
+
+def run_tei_classifier(tei_url: str, tei_model: str, tei_api_key: str, sender: str, subject: str, snippet: str, http_client: httpx.Client) -> Tuple[int, str, float, str]:
+    """Runs a reranker-based classifier prediction via the /rerank endpoint."""
+    query_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
+    headers = {"Content-Type": "application/json"}
+    if tei_api_key:
+        headers["Authorization"] = f"Bearer {tei_api_key}"
     try:
-        response = http_client.post(tei_url, json={"inputs": tei_text})
+        response = http_client.post(
+            tei_url,
+            headers=headers,
+            json={"model": tei_model, "query": query_text, "documents": [RERANK_IMPORTANT_ANCHOR, RERANK_NOISE_ANCHOR]}
+        )
         response.raise_for_status()
-        predictions = response.json()
-        
-        winning_pred = max(predictions, key=lambda x: x.get("score", 0.0))
-        winning_label = winning_pred.get("label", "").lower()
-        winning_score = winning_pred.get("score", 1.0)
-        
-        is_important = ("entailment" in winning_label and "not_" not in winning_label) or "important" in winning_label
+        results = response.json().get("results", [])
+
+        scores = {0: 0.0, 1: 0.0}
+        for r in results:
+            idx = r.get("index")
+            if idx in scores:
+                scores[idx] = r.get("relevance_score", 0.0)
+
+        important_score, noise_score = scores[0], scores[1]
+        is_important = important_score >= noise_score
         suggested_level = 2 if is_important else 1
-        reason = f"TEI Classifier resolved winning label: '{winning_label}'"
-        tag = "notification" if not is_important else "personal"
-        
+        winning_score = important_score if is_important else noise_score
+        reason = f"Rerank Classifier resolved importance={important_score:.4f} noise={noise_score:.4f}"
+        tag = "personal" if is_important else "notification"
+
         return suggested_level, reason, winning_score, tag
     except Exception as e:
-        logger.error("TEI Classifier call failed: %s", e)
+        logger.error("Rerank Classifier call failed: %s", e)
         # Safe default fallback
-        return 1, f"TEI prediction error: {e}", 0.0, "notification"
+        return 1, f"Rerank prediction error: {e}", 0.0, "notification"
 
 def run_llm_classifier(url: str, api_key: str, model: str, sender: str, subject: str, snippet: str, http_client: httpx.Client) -> Tuple[int, str, float, str]:
     """Runs an LLM-based triage classifier prediction."""
@@ -702,7 +716,9 @@ def main() -> None:
         # Determine endpoints
         if triage_type == "tei":
             tei_url = tc.get("tei_url") or tc.get("url") or profile_settings.tei_url
-            triage_model_name = tei_url
+            tei_model = tc.get("tei_model") or tc.get("model") or profile_settings.tei_model
+            tei_api_key = tc.get("tei_api_key") or tc.get("api_key") or profile_settings.triage.tei_api_key
+            triage_model_name = tei_model
         else:
             url = tc.get("url") or os.getenv("EMAIL_TRIAGE_TRIAGE_BASE_URL") or os.getenv("EMAIL_TRIAGE_LLM_BASE_URL") or profile_settings.triage_base_url
             api_key = tc.get("api_key") or os.getenv("EMAIL_TRIAGE_TRIAGE_API_KEY") or os.getenv("EMAIL_TRIAGE_LLM_API_KEY") or profile_settings.triage_api_key
@@ -719,7 +735,7 @@ def main() -> None:
             
             # 1. Run classifier prediction
             if triage_type == "tei":
-                pred_level, pred_reason, pred_score, pred_tag = run_tei_classifier(tei_url, sender, subject, snippet, http_client)
+                pred_level, pred_reason, pred_score, pred_tag = run_tei_classifier(tei_url, tei_model, tei_api_key, sender, subject, snippet, http_client)
             else:
                 pred_level, pred_reason, pred_score, pred_tag = run_llm_classifier(url, api_key, model, sender, subject, snippet, http_client)
                 

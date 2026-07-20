@@ -1,0 +1,15 @@
+data/
+.env
+profiles/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.pytest_cache/
+test-reports/
+scratch/
+auto_rater_data/
+*.db
+token.json
+credentials.json

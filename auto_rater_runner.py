@@ -84,6 +84,8 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     old_tei_model = getattr(settings.triage, "tei_model", "")
     old_tei_api_key = getattr(settings.triage, "tei_api_key", "")
     old_tei_router_enabled = getattr(settings.triage, "tei_router_enabled", False)
+    old_tei_noise_enabled = getattr(settings.triage, "tei_noise_enabled", True)
+    old_tei_signal_enabled = getattr(settings.triage, "tei_signal_enabled", True)
     old_tei_signal_threshold = getattr(settings.triage, "tei_signal_threshold", 0.8)
     old_tei_noise_threshold = getattr(settings.triage, "tei_noise_threshold", 0.8)
 
@@ -97,6 +99,10 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         settings.triage.tei_api_key = config["tei_api_key"]
     if "tei_router_enabled" in config:
         settings.triage.tei_router_enabled = config["tei_router_enabled"]
+    if "tei_noise_enabled" in config:
+        settings.triage.tei_noise_enabled = config["tei_noise_enabled"]
+    if "tei_signal_enabled" in config:
+        settings.triage.tei_signal_enabled = config["tei_signal_enabled"]
     if "tei_signal_threshold" in config:
         settings.triage.tei_signal_threshold = config["tei_signal_threshold"]
     if "tei_noise_threshold" in config:
@@ -373,6 +379,8 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     settings.triage.tei_model = old_tei_model
     settings.triage.tei_api_key = old_tei_api_key
     settings.triage.tei_router_enabled = old_tei_router_enabled
+    settings.triage.tei_noise_enabled = old_tei_noise_enabled
+    settings.triage.tei_signal_enabled = old_tei_signal_enabled
     settings.triage.tei_signal_threshold = old_tei_signal_threshold
     settings.triage.tei_noise_threshold = old_tei_noise_threshold
         

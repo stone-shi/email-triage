@@ -149,13 +149,17 @@ class EmailTriageEngine:
             important_score, noise_score = self._rerank(query_text, [RERANK_IMPORTANT_ANCHOR, RERANK_NOISE_ANCHOR])
 
             # Logic 1: High-Confidence Signal -> Escalate to Level 2
-            if important_score >= self.settings.triage.tei_signal_threshold and important_score >= noise_score:
+            if (getattr(self.settings.triage, "tei_signal_enabled", True)
+                    and important_score >= self.settings.triage.tei_signal_threshold
+                    and important_score >= noise_score):
                 reason = f"Rerank Signal Express Lane: importance score {important_score:.4f}"
                 logger.info("Level 0.5 Rerank Escalation: Signal detected with score %s", important_score)
                 return 2, reason, important_score
 
             # Logic 2: High-Confidence Noise -> Filter to Level 0
-            if noise_score >= self.settings.triage.tei_noise_threshold and noise_score > important_score:
+            if (getattr(self.settings.triage, "tei_noise_enabled", True)
+                    and noise_score >= self.settings.triage.tei_noise_threshold
+                    and noise_score > important_score):
                 reason = f"Rerank Noise Filter: noise score {noise_score:.4f}"
                 logger.info("Level 0.5 Rerank Filter: Noise detected with score %s", noise_score)
                 return 0, reason, noise_score

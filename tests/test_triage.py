@@ -31,6 +31,8 @@ def mock_settings():
     triage_config.tei_url = "https://rerank.example.com/v1/rerank"
     triage_config.tei_model = "localai/qwen3-reranker-0.6b"
     triage_config.tei_api_key = "tei-key"
+    triage_config.tei_noise_enabled = True
+    triage_config.tei_signal_enabled = True
     triage_config.tei_noise_threshold = 0.999
     triage_config.tei_signal_threshold = 0.95
     triage_config.whitelist_vip_senders = []
@@ -395,6 +397,40 @@ class TestTEIRouter:
             )
         assert override_level == 0
         assert "Rerank Noise" in reason
+
+    def test_tei_router_signal_direction_disabled(self, engine):
+        engine.settings.triage.tei_router_enabled = True
+        engine.settings.triage.tei_signal_enabled = False
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "results": [
+                {"index": 0, "relevance_score": 0.96},
+                {"index": 1, "relevance_score": 0.01},
+            ]
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            override_level, reason, confidence = engine.run_tei_router(
+                "boss@company.com", "Urgent Q3 Report", "Please review the report"
+            )
+        assert override_level is None
+
+    def test_tei_router_noise_direction_disabled(self, engine):
+        engine.settings.triage.tei_router_enabled = True
+        engine.settings.triage.tei_noise_enabled = False
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "results": [
+                {"index": 1, "relevance_score": 0.9995},
+                {"index": 0, "relevance_score": 0.0001},
+            ]
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            override_level, reason, confidence = engine.run_tei_router(
+                "spam@junk.com", "BUY NOW", "Limited time offer"
+            )
+        assert override_level is None
 
     def test_tei_router_ambiguous(self, engine):
         engine.settings.triage.tei_router_enabled = True

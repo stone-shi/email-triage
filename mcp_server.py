@@ -430,6 +430,51 @@ def _profile_status(name: str) -> Dict[str, Any]:
     }
 
 
+def _mask_secret(value: Any) -> str:
+    """Renders a secret as a presence indicator only, never the value itself."""
+    return "•••• (set)" if value else "(not set)"
+
+
+def _profile_config(name: str) -> Dict[str, Any]:
+    """Current effective (non-secret) config for one profile, for display on the dashboard."""
+    _, _, s = get_resources(name)
+    return {
+        "gmail_account": s.gmail_account,
+        "imap_host": s.imap_host,
+        "imap_port": s.imap_port,
+        "imap_login": s.imap_login,
+        "imap_password": _mask_secret(s.imap_password),
+        "smtp_host": s.smtp_host,
+        "smtp_port": s.smtp_port,
+        "smtp_login": s.active_smtp_login,
+        "smtp_password": _mask_secret(s.active_smtp_password),
+        "triage_base_url": s.triage_base_url,
+        "triage_model": s.triage_model,
+        "triage_api_key": _mask_secret(s.triage_api_key),
+        "summary_base_url": s.summary_base_url,
+        "summary_model": s.summary_model,
+        "summary_api_key": _mask_secret(s.summary_api_key),
+        "confidence_threshold": s.triage.confidence_threshold,
+        "triage_type": s.triage.triage_type,
+        "tei_url": s.triage.tei_url,
+        "tei_model": s.triage.tei_model,
+        "tei_api_key": _mask_secret(s.triage.tei_api_key),
+        "tei_router_enabled": s.triage.tei_router_enabled,
+        "tei_noise_enabled": s.triage.tei_noise_enabled,
+        "tei_signal_enabled": s.triage.tei_signal_enabled,
+        "tei_noise_threshold": s.triage.tei_noise_threshold,
+        "tei_signal_threshold": s.triage.tei_signal_threshold,
+        "whitelist_vip_senders": len(s.triage.whitelist_vip_senders),
+        "whitelist_domains": len(s.triage.whitelist_domains),
+        "blacklist_keywords": len(s.triage.blacklist_keywords),
+        "blacklist_senders": len(s.triage.blacklist_senders),
+        "scheduler_enabled": s.scheduler.enabled,
+        "scheduler_interval": s.scheduler.interval,
+        "scheduler_max_per_account": s.scheduler.max_per_account,
+        "scheduler_days": s.scheduler.days,
+    }
+
+
 def _dashboard_status() -> Dict[str, Any]:
     """Status payload backing the /api/status route and the web dashboard."""
     return {
@@ -438,7 +483,10 @@ def _dashboard_status() -> Dict[str, Any]:
             "interval": settings.scheduler.interval,
             "interval_seconds": settings.scheduler.interval_seconds,
         },
-        "profiles": {name: _profile_status(name) for name in list_profile_names()},
+        "profiles": {
+            name: {**_profile_status(name), "config": _profile_config(name)}
+            for name in list_profile_names()
+        },
     }
 
 
@@ -767,22 +815,27 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Email Triage - Sync Dashboard</title>
 <style>
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #f5f6f8; color: #1f2328; margin: 0; padding: 24px; }
   h1 { font-size: 20px; margin-bottom: 4px; }
-  .scheduler-info { color: #9aa0a6; margin-bottom: 20px; font-size: 13px; }
+  .scheduler-info { color: #57606a; margin-bottom: 20px; font-size: 13px; }
   .global-actions { margin-bottom: 20px; }
   button { background: #2563eb; color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 8px; }
   button.stop { background: #dc2626; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
-  .card { background: #1a1d24; border: 1px solid #2a2e37; border-radius: 10px; padding: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .card { background: #ffffff; border: 1px solid #d0d7de; border-radius: 10px; padding: 16px; box-shadow: 0 1px 2px rgba(31, 35, 40, 0.06); }
   .card h2 { margin: 0 0 8px; font-size: 15px; }
   .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
-  .badge.running { background: #1e3a8a; color: #93c5fd; }
-  .badge.idle { background: #1f2937; color: #9ca3af; }
-  .account { border-top: 1px solid #2a2e37; padding-top: 8px; margin-top: 8px; font-size: 13px; }
-  .account .label { color: #9aa0a6; }
-  .errors { color: #f87171; }
+  .badge.running { background: #dbeafe; color: #1d4ed8; }
+  .badge.idle { background: #eef0f2; color: #57606a; }
+  .account { border-top: 1px solid #e5e7eb; padding-top: 8px; margin-top: 8px; font-size: 13px; }
+  .account .label { color: #57606a; }
+  .errors { color: #b91c1c; }
+  details.config { margin-top: 12px; }
+  details.config summary { cursor: pointer; font-size: 12px; color: #2563eb; }
+  .cfg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; font-size: 12px; margin-top: 8px; }
+  .cfg-key { color: #57606a; }
+  .cfg-val { word-break: break-word; }
 </style>
 </head>
 <body>
@@ -824,6 +877,14 @@ function renderAccount(acct) {
     + '</div>';
 }
 
+function renderConfig(cfg) {
+  if (!cfg) return '';
+  const rows = Object.entries(cfg).map(([k, v]) =>
+    '<div class="cfg-key">' + k + '</div><div class="cfg-val">' + v + '</div>'
+  ).join('');
+  return '<details class="config"><summary>Configuration</summary><div class="cfg-grid">' + rows + '</div></details>';
+}
+
 function renderProfileCard(name, p) {
   const div = document.createElement('div');
   div.className = 'card';
@@ -836,7 +897,8 @@ function renderProfileCard(name, p) {
     + '<div style="margin-top:12px">'
     + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startSync(\\'' + name + '\\')">Sync Now</button>'
     + '<button class="stop" ' + (p.running ? '' : 'disabled') + ' onclick="stopSync(\\'' + name + '\\')">Stop</button>'
-    + '</div>';
+    + '</div>'
+    + renderConfig(p.config);
   return div;
 }
 

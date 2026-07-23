@@ -14,6 +14,46 @@ from gmail_client import GmailClient
 from imap_client import IMAPClient
 
 
+def make_fake_settings(**overrides):
+    s = MagicMock()
+    s.gmail_account = "gmail@test.com"
+    s.imap_host = "imap.test.com"
+    s.imap_port = 993
+    s.imap_login = "imap@test.com"
+    s.imap_password = ""
+    s.smtp_host = "smtp.test.com"
+    s.smtp_port = 465
+    s.active_smtp_login = "gmail@test.com"
+    s.active_smtp_password = ""
+    s.triage_base_url = "http://triage.test"
+    s.triage_model = "model-a"
+    s.triage_api_key = ""
+    s.summary_base_url = "http://summary.test"
+    s.summary_model = "model-b"
+    s.summary_api_key = ""
+    s.triage.confidence_threshold = 0.8
+    s.triage.triage_type = "llm"
+    s.triage.tei_url = "http://tei.test"
+    s.triage.tei_model = "tei-model"
+    s.triage.tei_api_key = ""
+    s.triage.tei_router_enabled = False
+    s.triage.tei_noise_enabled = True
+    s.triage.tei_signal_enabled = True
+    s.triage.tei_noise_threshold = 0.9
+    s.triage.tei_signal_threshold = 0.9
+    s.triage.whitelist_vip_senders = []
+    s.triage.whitelist_domains = []
+    s.triage.blacklist_keywords = []
+    s.triage.blacklist_senders = []
+    s.scheduler.enabled = True
+    s.scheduler.interval = "15m"
+    s.scheduler.max_per_account = None
+    s.scheduler.days = None
+    for key, value in overrides.items():
+        setattr(s, key, value)
+    return s
+
+
 def make_email(msg_id, sender="s@x.com", subject="Subj", date="2026-01-01", snippet="snip", eid="internal-1"):
     return {
         "id": eid, "message_id": msg_id, "sender": sender, "subject": subject,
@@ -398,6 +438,45 @@ class TestProfileStatusHelper:
             mcp_server._get_stop_event(profile).clear()
 
 
+class TestProfileConfigMasking:
+    def test_secrets_are_masked_not_leaked(self, monkeypatch):
+        settings = make_fake_settings(
+            triage_api_key="triage-secret", summary_api_key="summary-secret",
+            imap_password="imap-secret", active_smtp_password="smtp-secret",
+        )
+        settings.triage.tei_api_key = "tei-secret"
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (MagicMock(), MagicMock(), settings))
+
+        cfg = mcp_server._profile_config("default")
+
+        for secret in ("triage-secret", "summary-secret", "imap-secret", "smtp-secret", "tei-secret"):
+            assert secret not in str(cfg.values())
+        assert cfg["triage_api_key"] == "•••• (set)"
+        assert cfg["summary_api_key"] == "•••• (set)"
+        assert cfg["imap_password"] == "•••• (set)"
+        assert cfg["smtp_password"] == "•••• (set)"
+        assert cfg["tei_api_key"] == "•••• (set)"
+
+    def test_unset_secrets_show_not_set(self, monkeypatch):
+        settings = make_fake_settings()
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (MagicMock(), MagicMock(), settings))
+
+        cfg = mcp_server._profile_config("default")
+
+        assert cfg["triage_api_key"] == "(not set)"
+        assert cfg["imap_password"] == "(not set)"
+
+    def test_non_secret_fields_pass_through(self, monkeypatch):
+        settings = make_fake_settings()
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (MagicMock(), MagicMock(), settings))
+
+        cfg = mcp_server._profile_config("default")
+
+        assert cfg["triage_model"] == "model-a"
+        assert cfg["confidence_threshold"] == 0.8
+        assert cfg["scheduler_interval"] == "15m"
+
+
 class TestDashboardRoutes:
     @pytest.fixture
     def client(self, monkeypatch):
@@ -405,9 +484,7 @@ class TestDashboardRoutes:
 
         db = MagicMock(spec=EmailDB)
         db.get_sync_summary.return_value = None
-        settings = MagicMock()
-        settings.gmail_account = "gmail@test.com"
-        settings.imap_login = "imap@test.com"
+        settings = make_fake_settings(gmail_account="gmail@test.com", imap_login="imap@test.com", triage_api_key="super-secret")
         monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
         monkeypatch.setattr(mcp_server, "list_profile_names", lambda: ["default"])
 
@@ -425,7 +502,14 @@ class TestDashboardRoutes:
         data = response.json()
         assert "scheduler" in data
         assert set(data["profiles"].keys()) == {"default"}
-        assert data["profiles"]["default"]["gmail"]["account"] == "gmail@test.com"
+        profile_data = data["profiles"]["default"]
+        assert profile_data["gmail"]["account"] == "gmail@test.com"
+        assert "config" in profile_data
+        assert profile_data["config"]["gmail_account"] == "gmail@test.com"
+        # secrets must never appear in the payload, only a presence indicator
+        assert "super-secret" not in response.text
+        assert profile_data["config"]["triage_api_key"] == "•••• (set)"
+        assert profile_data["config"]["imap_password"] == "(not set)"
 
     def test_sync_start_and_stop_do_not_block(self, client, monkeypatch):
         started = threading.Event()

@@ -348,6 +348,39 @@ class TestEmailDBUnreadQueries:
         assert ids == {"<v1@test.com>"}
 
 
+class TestEmailDBEmailCounts:
+    def test_counts_by_level_and_pending(self, db):
+        db.upsert_email_metadata(message_id="<pending@test.com>", account="acct-a@test.com")
+        db.save_triage_result(
+            message_id="<l0@test.com>", account="acct-a@test.com", sender="s", subject="sub",
+            date_str="d", level_0_status="filtered", triage_level=0, tag="low",
+        )
+        db.save_triage_result(
+            message_id="<l1@test.com>", account="acct-a@test.com", sender="s", subject="sub",
+            date_str="d", level_0_status="passed", triage_level=1, tag="notification",
+        )
+        db.save_triage_result(
+            message_id="<l2@test.com>", account="acct-a@test.com", sender="s", subject="sub",
+            date_str="d", level_0_status="passed", triage_level=2, tag="vip",
+        )
+        db.upsert_email_metadata(message_id="<other-acct@test.com>", account="acct-b@test.com")
+
+        counts = db.get_email_counts("acct-a@test.com")
+        assert counts == {"total": 4, "level_0": 1, "level_1": 1, "level_2": 1, "pending_triage": 1}
+
+    def test_counts_across_all_accounts_when_unscoped(self, db):
+        db.upsert_email_metadata(message_id="<a@test.com>", account="acct-a@test.com")
+        db.upsert_email_metadata(message_id="<b@test.com>", account="acct-b@test.com")
+
+        counts = db.get_email_counts()
+        assert counts["total"] == 2
+
+    def test_counts_empty_db(self, db):
+        assert db.get_email_counts("nobody@test.com") == {
+            "total": 0, "level_0": 0, "level_1": 0, "level_2": 0, "pending_triage": 0,
+        }
+
+
 class TestEmailDBSyncSummary:
     def test_get_sync_summary_missing_returns_none(self, db):
         assert db.get_sync_summary("acct@test.com") is None

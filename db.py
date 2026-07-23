@@ -2,7 +2,7 @@ import sqlite3
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from config import settings
 
 logger = logging.getLogger("email_triage.db")
@@ -291,6 +291,30 @@ class EmailDB:
         except Exception as e:
             logger.error("Failed to fetch unread message ids for %s: %s", account, e)
             return set()
+
+    def get_email_counts(self, account: Optional[str] = None) -> Dict[str, int]:
+        """Aggregate cached-email counts by triage level, optionally scoped to one account."""
+        counts = {"total": 0, "level_0": 0, "level_1": 0, "level_2": 0, "pending_triage": 0}
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                query = "SELECT triage_level, COUNT(*) FROM email_cache"
+                params: list = []
+                if account:
+                    query += " WHERE account = ?"
+                    params.append(account)
+                query += " GROUP BY triage_level"
+                cursor.execute(query, params)
+                for level, cnt in cursor.fetchall():
+                    counts["total"] += cnt
+                    if level is None:
+                        counts["pending_triage"] = cnt
+                    elif level in (0, 1, 2):
+                        counts[f"level_{level}"] = cnt
+            return counts
+        except Exception as e:
+            logger.error("Failed to get email counts for %s: %s", account or "all accounts", e)
+            return counts
 
     def save_triage_result(
         self,

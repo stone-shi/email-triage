@@ -260,6 +260,28 @@ def _get_stop_event(profile: str) -> threading.Event:
         return _stop_events.setdefault(profile, threading.Event())
 
 
+# Live progress of an in-flight sync_account call, keyed by account (e.g. settings.gmail_account).
+# Present only while a sync is actively processing that account; absent once it finishes or errors.
+_sync_progress: Dict[str, Dict[str, Any]] = {}
+_sync_progress_guard = threading.Lock()
+
+
+def _set_progress(account_label: str, **fields: Any) -> None:
+    with _sync_progress_guard:
+        _sync_progress.setdefault(account_label, {}).update(fields)
+
+
+def _clear_progress(account_label: str) -> None:
+    with _sync_progress_guard:
+        _sync_progress.pop(account_label, None)
+
+
+def _get_progress(account_label: str) -> Optional[Dict[str, Any]]:
+    with _sync_progress_guard:
+        entry = _sync_progress.get(account_label)
+        return dict(entry) if entry is not None else None
+
+
 def _run_tiered_triage(
     engine: Any, db: EmailDB, settings_instance: Any,
     msg_id: str, account: str, sender: str, subject: str, date_str: str, snippet: str, full_body: str,
@@ -354,43 +376,49 @@ def sync_account(
         "account": account_label, "downloaded": 0, "reconciled_read": 0, "triaged": 0, "errors": [],
     }
     try:
-        if isinstance(client, GmailClient):
-            live = client.fetch_unread_messages(max_results=None, days=days)
-        else:
-            live = client.fetch_unread_headers(max_results=None, days=days)
-        live_ids = {e["message_id"] for e in live}
+        _set_progress(account_label, phase="listing", total=0, processed=0, current_subject=None)
+        try:
+            if isinstance(client, GmailClient):
+                live = client.fetch_unread_messages(max_results=None, days=days)
+            else:
+                live = client.fetch_unread_headers(max_results=None, days=days)
+            live_ids = {e["message_id"] for e in live}
 
-        # Reconcile: previously-cached-unread messages no longer present in the live unread set
-        # have since been read (elsewhere, e.g. webmail) -> flip them to read.
-        newly_read = db.get_unread_message_ids(account_label) - live_ids
-        for mid in newly_read:
-            db.upsert_email_metadata(message_id=mid, account=account_label, is_unread=False)
-        summary["reconciled_read"] = len(newly_read)
+            # Reconcile: previously-cached-unread messages no longer present in the live unread set
+            # have since been read (elsewhere, e.g. webmail) -> flip them to read.
+            newly_read = db.get_unread_message_ids(account_label) - live_ids
+            for mid in newly_read:
+                db.upsert_email_metadata(message_id=mid, account=account_label, is_unread=False)
+            summary["reconciled_read"] = len(newly_read)
 
-        to_process = live[:max_results] if max_results else live
-        for e in to_process:
-            if stop_event and stop_event.is_set():
-                summary["status"] = "stopped"
-                break
-            msg_id = e["message_id"]
-            cached = db.get_cached_result(msg_id)
-            need_body = not cached or not cached.get("email_body")
-            full_body = client.fetch_full_body(e["id"]) if need_body else cached["email_body"]
-            db.upsert_email_metadata(
-                message_id=msg_id, account=account_label, sender=e.get("sender"), subject=e.get("subject"),
-                date_str=e.get("date"), snippet=e.get("snippet"), source_id=str(e.get("id")),
-                email_body=full_body, is_unread=True,
-            )
-            summary["downloaded"] += 1
-            if not cached or cached.get("triage_level") is None:
-                _run_tiered_triage(
-                    engine, db, settings_instance, msg_id, account_label, e.get("sender"), e.get("subject"),
-                    e.get("date"), e.get("snippet"), full_body,
+            to_process = live[:max_results] if max_results else live
+            _set_progress(account_label, phase="syncing", total=len(to_process), processed=0, current_subject=None)
+            for idx, e in enumerate(to_process):
+                if stop_event and stop_event.is_set():
+                    summary["status"] = "stopped"
+                    break
+                msg_id = e["message_id"]
+                cached = db.get_cached_result(msg_id)
+                need_body = not cached or not cached.get("email_body")
+                full_body = client.fetch_full_body(e["id"]) if need_body else cached["email_body"]
+                db.upsert_email_metadata(
+                    message_id=msg_id, account=account_label, sender=e.get("sender"), subject=e.get("subject"),
+                    date_str=e.get("date"), snippet=e.get("snippet"), source_id=str(e.get("id")),
+                    email_body=full_body, is_unread=True,
                 )
-                summary["triaged"] += 1
-    except Exception as ex:
-        logger.error("sync_account failed for %s: %s", account_label, ex, exc_info=True)
-        summary["errors"].append(str(ex))
+                summary["downloaded"] += 1
+                if not cached or cached.get("triage_level") is None:
+                    _run_tiered_triage(
+                        engine, db, settings_instance, msg_id, account_label, e.get("sender"), e.get("subject"),
+                        e.get("date"), e.get("snippet"), full_body,
+                    )
+                    summary["triaged"] += 1
+                _set_progress(account_label, processed=idx + 1, current_subject=e.get("subject"))
+        except Exception as ex:
+            logger.error("sync_account failed for %s: %s", account_label, ex, exc_info=True)
+            summary["errors"].append(str(ex))
+    finally:
+        _clear_progress(account_label)
 
     summary["last_download_at"] = datetime.now(timezone.utc).isoformat()
     db.save_sync_summary(account_label, summary)
@@ -444,20 +472,37 @@ def sync_all_profiles() -> Dict[str, Any]:
     return {"profiles": {name: sync_profile(name) for name in list_profile_names()}}
 
 
+_PLACEHOLDER_GMAIL_ACCOUNT = "your_email@gmail.com"
+_PLACEHOLDER_IMAP_LOGIN = "your_email@domain.com"
+
+
+def _is_configured(profile_settings: Any) -> bool:
+    """True unless a profile's Gmail/IMAP identity is still at the uninitialized placeholder default."""
+    return (
+        profile_settings.gmail_account != _PLACEHOLDER_GMAIL_ACCOUNT
+        or profile_settings.imap_login != _PLACEHOLDER_IMAP_LOGIN
+    )
+
+
 def _profile_status(name: str) -> Dict[str, Any]:
-    """Current sync status + last-download summary for one profile's Gmail and IMAP accounts."""
+    """Current sync status + last-download summary + cached counts for one profile's accounts."""
     db, _, profile_settings = get_resources(name)
     return {
         "profile": name,
+        "configured": _is_configured(profile_settings),
         "running": _get_profile_lock(name).locked(),
         "stop_requested": _get_stop_event(name).is_set(),
         "gmail": {
             "account": profile_settings.gmail_account,
             "summary": db.get_sync_summary(profile_settings.gmail_account),
+            "counts": db.get_email_counts(profile_settings.gmail_account),
+            "progress": _get_progress(profile_settings.gmail_account),
         },
         "imap": {
             "account": profile_settings.imap_login,
             "summary": db.get_sync_summary(profile_settings.imap_login),
+            "counts": db.get_email_counts(profile_settings.imap_login),
+            "progress": _get_progress(profile_settings.imap_login),
         },
     }
 
@@ -509,16 +554,23 @@ def _profile_config(name: str) -> Dict[str, Any]:
 
 def _dashboard_status() -> Dict[str, Any]:
     """Status payload backing the /api/status route and the web dashboard."""
+    profiles: Dict[str, Any] = {}
+    for name in list_profile_names():
+        status = _profile_status(name)
+        # The "default" profile always exists (list_profile_names() guarantees it) even when no
+        # one has ever set it up -- don't clutter the dashboard with a placeholder-only card for it.
+        # Named profiles are always shown, even mid-setup, since the user created them intentionally.
+        if name == "default" and not status["configured"]:
+            continue
+        profiles[name] = {**status, "config": _profile_config(name)}
+
     return {
         "scheduler": {
             "enabled": settings.scheduler.enabled,
             "interval": settings.scheduler.interval,
             "interval_seconds": settings.scheduler.interval_seconds,
         },
-        "profiles": {
-            name: {**_profile_status(name), "config": _profile_config(name)}
-            for name in list_profile_names()
-        },
+        "profiles": profiles,
     }
 
 
@@ -868,6 +920,11 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
   .cfg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; font-size: 12px; margin-top: 8px; }
   .cfg-key { color: #57606a; }
   .cfg-val { word-break: break-word; }
+  .counts { color: #57606a; }
+  .progress-wrap { margin-top: 6px; }
+  .progress-bar { background: #e5e7eb; border-radius: 999px; height: 6px; overflow: hidden; }
+  .progress-fill { background: #2563eb; height: 100%; }
+  .progress-label { font-size: 11px; color: #57606a; margin-top: 3px; }
   .logs-section { margin-top: 28px; }
   .logs-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .logs-header h2 { font-size: 15px; margin: 0; }
@@ -912,18 +969,46 @@ async function loadStatus() {
   }
 }
 
+function renderCounts(counts) {
+  if (!counts) return '';
+  return '<div class="counts">total cached: ' + counts.total
+    + ' &middot; L0: ' + counts.level_0
+    + ' &middot; L1: ' + counts.level_1
+    + ' &middot; L2: ' + counts.level_2
+    + (counts.pending_triage ? ' &middot; pending: ' + counts.pending_triage : '')
+    + '</div>';
+}
+
+function renderProgress(progress) {
+  if (!progress) return '';
+  const total = progress.total || 0;
+  const processed = progress.processed || 0;
+  const pct = total ? Math.round((processed / total) * 100) : 0;
+  const label = progress.phase === 'listing'
+    ? 'listing unread mail&hellip;'
+    : processed + ' / ' + total + (progress.current_subject ? ' &mdash; ' + progress.current_subject : '');
+  return '<div class="progress-wrap">'
+    + '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div>'
+    + '<div class="progress-label">' + label + '</div>'
+    + '</div>';
+}
+
 function renderAccount(acct) {
   const s = acct.summary;
+  const counts = renderCounts(acct.counts);
+  const progress = renderProgress(acct.progress);
   if (!s) {
-    return '<div class="account"><div class="label">' + acct.account + '</div><div>never synced</div></div>';
+    return '<div class="account"><div class="label">' + acct.account + '</div>' + counts + '<div>never synced</div>' + progress + '</div>';
   }
   const errors = (s.errors && s.errors.length) ? '<div class="errors">' + s.errors.join('; ') + '</div>' : '';
   const status = s.status ? ' (' + s.status + ')' : '';
   return '<div class="account">'
     + '<div class="label">' + acct.account + status + '</div>'
+    + counts
     + '<div>last sync: ' + (s.last_download_at || 'n/a') + '</div>'
     + '<div>downloaded: ' + (s.downloaded ?? 0) + ' &middot; reconciled: ' + (s.reconciled_read ?? 0) + ' &middot; triaged: ' + (s.triaged ?? 0) + '</div>'
     + errors
+    + progress
     + '</div>';
 }
 
@@ -1088,7 +1173,15 @@ if __name__ == "__main__":
                     tg.start_soon(scheduler_loop)
                 else:
                     logger.info("Background sync scheduler disabled via config.")
-                tg.start_soon(run_server)
+                # Run the server in the task group's own task (not start_soon) so that once it
+                # returns (e.g. after SIGTERM/SIGINT triggers uvicorn's graceful shutdown), we can
+                # explicitly wind down the scheduler loop too -- otherwise its `while True` never
+                # exits on its own, the task group never completes, and the process hangs until
+                # Docker's stop grace period elapses and force-kills it instead of exiting cleanly.
+                await run_server()
+                logger.info("Server shutting down; requesting any in-progress sync to stop...")
+                _stop_sync("all")
+                tg.cancel_scope.cancel()
 
         anyio.run(run_all)
     else:

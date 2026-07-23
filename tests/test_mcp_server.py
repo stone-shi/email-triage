@@ -127,6 +127,60 @@ class TestSyncAccount:
         client.fetch_full_body.assert_not_called()
         engine.is_vip_sender.assert_not_called()
 
+    def test_progress_cleared_after_completion(self):
+        db = MagicMock(spec=EmailDB)
+        db.get_unread_message_ids.return_value = set()
+        db.get_cached_result.return_value = None
+        engine = MagicMock(spec=EmailTriageEngine)
+        engine.is_vip_sender.return_value = False
+        engine.run_level_0_static.return_value = (True, "noise")
+        client = MagicMock(spec=GmailClient)
+        client.fetch_unread_messages.return_value = [make_email("<c@test.com>")]
+        client.fetch_full_body.return_value = "body"
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+
+        mcp_server.sync_account(db, engine, settings, client, "progress-acct@test.com", None, 7)
+
+        assert mcp_server._get_progress("progress-acct@test.com") is None
+
+    def test_progress_cleared_even_on_error(self):
+        db = MagicMock(spec=EmailDB)
+        db.get_unread_message_ids.side_effect = RuntimeError("boom")
+        engine = MagicMock(spec=EmailTriageEngine)
+        client = MagicMock(spec=GmailClient)
+        client.fetch_unread_messages.return_value = []
+        settings = MagicMock()
+
+        summary = mcp_server.sync_account(db, engine, settings, client, "error-acct@test.com", None, 7)
+
+        assert summary["errors"]
+        assert mcp_server._get_progress("error-acct@test.com") is None
+
+
+class TestSyncProgressHelpers:
+    def test_set_get_clear_roundtrip(self):
+        account = "progress-helper-acct@test.com"
+        assert mcp_server._get_progress(account) is None
+
+        mcp_server._set_progress(account, phase="syncing", total=10, processed=0)
+        assert mcp_server._get_progress(account) == {"phase": "syncing", "total": 10, "processed": 0}
+
+        mcp_server._set_progress(account, processed=3)
+        assert mcp_server._get_progress(account)["processed"] == 3
+
+        mcp_server._clear_progress(account)
+        assert mcp_server._get_progress(account) is None
+
+    def test_returned_snapshot_is_a_copy(self):
+        account = "progress-copy-acct@test.com"
+        mcp_server._set_progress(account, total=5, processed=1)
+        snapshot = mcp_server._get_progress(account)
+        snapshot["processed"] = 999
+
+        assert mcp_server._get_progress(account)["processed"] == 1
+        mcp_server._clear_progress(account)
+
 
 class TestSyncProfile:
     def test_merges_gmail_and_imap_results(self, monkeypatch):
@@ -438,6 +492,86 @@ class TestProfileStatusHelper:
             lock.release()
             mcp_server._get_stop_event(profile).clear()
 
+    def test_configured_flag_true_for_real_settings(self, monkeypatch):
+        settings = make_fake_settings(gmail_account="real@gmail.com", imap_login="real@domain.com")
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (MagicMock(spec=EmailDB), MagicMock(), settings))
+
+        assert mcp_server._profile_status("default")["configured"] is True
+
+    def test_configured_flag_false_for_placeholder_settings(self, monkeypatch):
+        settings = make_fake_settings(
+            gmail_account=mcp_server._PLACEHOLDER_GMAIL_ACCOUNT,
+            imap_login=mcp_server._PLACEHOLDER_IMAP_LOGIN,
+        )
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (MagicMock(spec=EmailDB), MagicMock(), settings))
+
+        assert mcp_server._profile_status("default")["configured"] is False
+
+    def test_configured_flag_true_if_only_one_side_is_set(self, monkeypatch):
+        settings = make_fake_settings(gmail_account="real@gmail.com", imap_login=mcp_server._PLACEHOLDER_IMAP_LOGIN)
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (MagicMock(spec=EmailDB), MagicMock(), settings))
+
+        assert mcp_server._profile_status("default")["configured"] is True
+
+
+class TestDashboardStatusFiltering:
+    def test_unconfigured_default_is_hidden(self, monkeypatch):
+        placeholder_settings = make_fake_settings(
+            gmail_account=mcp_server._PLACEHOLDER_GMAIL_ACCOUNT,
+            imap_login=mcp_server._PLACEHOLDER_IMAP_LOGIN,
+        )
+        configured_settings = make_fake_settings(gmail_account="stone@gmail.com", imap_login="stone@domain.com")
+
+        def fake_get_resources(name):
+            db = MagicMock(spec=EmailDB)
+            db.get_sync_summary.return_value = None
+            db.get_email_counts.return_value = {"total": 0, "level_0": 0, "level_1": 0, "level_2": 0, "pending_triage": 0}
+            settings = placeholder_settings if name == "default" else configured_settings
+            return (db, MagicMock(), settings)
+
+        monkeypatch.setattr(mcp_server, "get_resources", fake_get_resources)
+        monkeypatch.setattr(mcp_server, "list_profile_names", lambda: ["default", "stone"])
+
+        status = mcp_server._dashboard_status()
+
+        assert set(status["profiles"].keys()) == {"stone"}
+
+    def test_configured_default_is_shown(self, monkeypatch):
+        configured_settings = make_fake_settings(gmail_account="real@gmail.com", imap_login="real@domain.com")
+
+        def fake_get_resources(name):
+            db = MagicMock(spec=EmailDB)
+            db.get_sync_summary.return_value = None
+            db.get_email_counts.return_value = {"total": 0, "level_0": 0, "level_1": 0, "level_2": 0, "pending_triage": 0}
+            return (db, MagicMock(), configured_settings)
+
+        monkeypatch.setattr(mcp_server, "get_resources", fake_get_resources)
+        monkeypatch.setattr(mcp_server, "list_profile_names", lambda: ["default"])
+
+        status = mcp_server._dashboard_status()
+
+        assert set(status["profiles"].keys()) == {"default"}
+
+    def test_unconfigured_named_profile_is_still_shown(self, monkeypatch):
+        placeholder_settings = make_fake_settings(
+            gmail_account=mcp_server._PLACEHOLDER_GMAIL_ACCOUNT,
+            imap_login=mcp_server._PLACEHOLDER_IMAP_LOGIN,
+        )
+
+        def fake_get_resources(name):
+            db = MagicMock(spec=EmailDB)
+            db.get_sync_summary.return_value = None
+            db.get_email_counts.return_value = {"total": 0, "level_0": 0, "level_1": 0, "level_2": 0, "pending_triage": 0}
+            return (db, MagicMock(), placeholder_settings)
+
+        monkeypatch.setattr(mcp_server, "get_resources", fake_get_resources)
+        monkeypatch.setattr(mcp_server, "list_profile_names", lambda: ["freshly-created-profile"])
+
+        status = mcp_server._dashboard_status()
+
+        # Only "default" is special-cased -- a newly created named profile is shown even mid-setup.
+        assert set(status["profiles"].keys()) == {"freshly-created-profile"}
+
 
 class TestProfileConfigMasking:
     def test_secrets_are_masked_not_leaked(self, monkeypatch):
@@ -485,6 +619,7 @@ class TestDashboardRoutes:
 
         db = MagicMock(spec=EmailDB)
         db.get_sync_summary.return_value = None
+        db.get_email_counts.return_value = {"total": 0, "level_0": 0, "level_1": 0, "level_2": 0, "pending_triage": 0}
         settings = make_fake_settings(gmail_account="gmail@test.com", imap_login="imap@test.com", triage_api_key="super-secret")
         monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
         monkeypatch.setattr(mcp_server, "list_profile_names", lambda: ["default"])
@@ -505,6 +640,8 @@ class TestDashboardRoutes:
         assert set(data["profiles"].keys()) == {"default"}
         profile_data = data["profiles"]["default"]
         assert profile_data["gmail"]["account"] == "gmail@test.com"
+        assert profile_data["gmail"]["counts"]["total"] == 0
+        assert profile_data["gmail"]["progress"] is None
         assert "config" in profile_data
         assert profile_data["config"]["gmail_account"] == "gmail@test.com"
         # secrets must never appear in the payload, only a presence indicator

@@ -210,7 +210,7 @@ def get_resources(profile_name: str = "default"):
     from config import Settings
     profile_settings = Settings.load_for_profile(profile_name)
     
-    logger.info("get_resources active. Profile: %s (mapped from context: %s). Paths: DB=%s, Token=%s, Creds=%s",
+    logger.debug("get_resources active. Profile: %s (mapped from context: %s). Paths: DB=%s, Token=%s, Creds=%s",
                 profile_name, mapped_profile,
                 profile_settings.workspace_dir / "email_cache.db",
                 profile_settings.gmail_token_path,
@@ -392,15 +392,41 @@ def sync_account(
             summary["reconciled_read"] = len(newly_read)
 
             to_process = live[:max_results] if max_results else live
-            _set_progress(account_label, phase="syncing", total=len(to_process), processed=0, current_subject=None)
+
+            # Phase 1: figure out which messages already have a cached body vs need a fresh fetch.
+            cached_by_id: Dict[str, Optional[Dict[str, Any]]] = {}
+            need_body_source_ids: List[str] = []
+            for e in to_process:
+                cached = db.get_cached_result(e["message_id"])
+                cached_by_id[e["message_id"]] = cached
+                if not cached or not cached.get("email_body"):
+                    need_body_source_ids.append(str(e["id"]))
+
+            # Phase 2: batch-fetch bodies for everything that needs one in as few round trips as
+            # possible (Gmail HTTP batching / a single multi-UID IMAP FETCH), instead of one
+            # request per message. This is a throughput optimization only -- it does not reduce
+            # API quota usage, so retry-with-backoff still applies inside each client.
+            fetched_bodies: Dict[str, str] = {}
+            if need_body_source_ids and not (stop_event and stop_event.is_set()):
+                _set_progress(
+                    account_label, phase="downloading", total=len(need_body_source_ids),
+                    processed=0, current_subject=None,
+                )
+                fetched_bodies = client.fetch_full_bodies_batch(need_body_source_ids)
+
+            # Phase 3: persist + triage each message, still checked/interruptible per-message
+            # since this is where the slow LLM calls happen.
+            _set_progress(account_label, phase="triaging", total=len(to_process), processed=0, current_subject=None)
             for idx, e in enumerate(to_process):
                 if stop_event and stop_event.is_set():
                     summary["status"] = "stopped"
                     break
                 msg_id = e["message_id"]
-                cached = db.get_cached_result(msg_id)
-                need_body = not cached or not cached.get("email_body")
-                full_body = client.fetch_full_body(e["id"]) if need_body else cached["email_body"]
+                cached = cached_by_id.get(msg_id)
+                if cached and cached.get("email_body"):
+                    full_body = cached["email_body"]
+                else:
+                    full_body = fetched_bodies.get(str(e["id"]), "")
                 db.upsert_email_metadata(
                     message_id=msg_id, account=account_label, sender=e.get("sender"), subject=e.get("subject"),
                     date_str=e.get("date"), snippet=e.get("snippet"), source_id=str(e.get("id")),

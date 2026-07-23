@@ -140,7 +140,7 @@ class EmailDB:
                     )
                 """)
                 conn.commit()
-            logger.info("SQLite Database initialized at %s", self.db_path)
+            logger.debug("SQLite Database initialized at %s", self.db_path)
         except Exception as e:
             logger.error("Failed to initialize database: %s", e, exc_info=True)
             raise

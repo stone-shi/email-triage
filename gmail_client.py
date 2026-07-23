@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from google.auth.transport.requests import Request
@@ -11,6 +12,15 @@ logger = logging.getLogger("email_triage.gmail")
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+
+# HTTP statuses worth retrying with backoff (rate limiting / transient server errors), as opposed
+# to permanent failures (404 deleted message, 400 bad request, auth errors) that should not retry.
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _http_status(exc: Exception) -> Optional[int]:
+    resp = getattr(exc, "resp", None)
+    return getattr(resp, "status", None) if resp is not None else None
 
 class GmailClient:
     def __init__(self, settings_instance: Optional[Any] = None) -> None:
@@ -104,19 +114,24 @@ class GmailClient:
             logger.error("Gmail authentication failure: %s", e, exc_info=True)
             raise
 
-    def _fetch_metadata_batch(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _fetch_metadata_batch(self, messages: List[Dict[str, Any]], max_retries: int = 4) -> List[Dict[str, Any]]:
         """
         Helper method to fetch metadata for multiple messages using Gmail HTTP Batching.
-        Reduces roundtrips by batching up to 100 requests per batch call.
+        Reduces roundtrips by batching up to 100 requests per batch call. Requests that fail
+        with a transient error (429 rate limiting, 5xx) are retried with exponential backoff
+        up to max_retries times before being given up on; permanent errors are logged and dropped.
         """
         if not self.service or not messages:
             return []
 
         results: List[Dict[str, Any]] = []
+        permanently_failed_ids = set()
 
         def batch_callback(request_id, response, exception):
             if exception is not None:
-                logger.error("Failed to fetch message metadata: %s", exception)
+                if _http_status(exception) not in _RETRYABLE_STATUS_CODES:
+                    logger.error("Failed to fetch message metadata for %s: %s", request_id, exception)
+                    permanently_failed_ids.add(request_id)
                 return
             try:
                 headers = response.get('payload', {}).get('headers', [])
@@ -141,44 +156,77 @@ class GmailClient:
                 })
             except Exception as callback_err:
                 logger.error("Error parsing batch response metadata: %s", callback_err)
+                permanently_failed_ids.add(request_id)
 
+        all_ids = [msg['id'] for msg in messages]
         chunk_size = 100
-        for i in range(0, len(messages), chunk_size):
-            chunk = messages[i:i + chunk_size]
-            try:
-                batch = self.service.new_batch_http_request(callback=batch_callback)
-                for msg in chunk:
-                    batch.add(self.service.users().messages().get(
-                        userId='me', id=msg['id'], format='metadata',
-                        metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
-                    ))
-                batch.execute()
-            except Exception as e:
-                logger.error("Failed to execute Gmail metadata batch: %s. Falling back to sequential...", e)
-                # Fallback to sequential fetching for this chunk
-                for msg in chunk:
-                    try:
-                        msg_meta = self.service.users().messages().get(
-                            userId='me', id=msg['id'], format='metadata',
-                            metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
-                        ).execute()
-                        headers = msg_meta.get('payload', {}).get('headers', [])
-                        header_dict = {h['name']: h['value'] for h in headers}
-                        results.append({
-                            'id': msg['id'],
-                            'message_id': header_dict.get('Message-ID', msg['id']),
-                            'sender': header_dict.get('From', 'Unknown Sender'),
-                            'subject': header_dict.get('Subject', '(No Subject)'),
-                            'date': header_dict.get('Date', ''),
-                            'snippet': msg_meta.get('snippet', ''),
-                            'account': self.settings.gmail_account,
-                            'raw_meta': msg_meta
-                        })
-                    except Exception as fallback_err:
-                        logger.error("Sequential fallback failed for message %s: %s", msg['id'], fallback_err)
+        pending_ids = list(all_ids)
+        attempt = 0
+
+        while pending_ids and attempt <= max_retries:
+            if attempt > 0:
+                delay = min(2 ** attempt, 30)
+                logger.warning(
+                    "Retrying %d Gmail metadata fetch(es) after rate limiting/transient error "
+                    "(attempt %d/%d, backoff %ss)",
+                    len(pending_ids), attempt, max_retries, delay,
+                )
+                time.sleep(delay)
+
+            for i in range(0, len(pending_ids), chunk_size):
+                chunk_ids = pending_ids[i:i + chunk_size]
+                try:
+                    batch = self.service.new_batch_http_request(callback=batch_callback)
+                    for mid in chunk_ids:
+                        batch.add(
+                            self.service.users().messages().get(
+                                userId='me', id=mid, format='metadata',
+                                metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
+                            ),
+                            request_id=mid,
+                        )
+                    batch.execute()
+                except Exception as e:
+                    if _http_status(e) in _RETRYABLE_STATUS_CODES:
+                        logger.warning("Gmail metadata batch call rate-limited/transient error: %s", e)
+                        continue
+                    logger.error("Failed to execute Gmail metadata batch: %s. Falling back to sequential...", e)
+                    # Fallback to sequential fetching for this chunk
+                    for mid in chunk_ids:
+                        try:
+                            msg_meta = self.service.users().messages().get(
+                                userId='me', id=mid, format='metadata',
+                                metadataHeaders=['Message-ID', 'From', 'Subject', 'Date']
+                            ).execute()
+                            headers = msg_meta.get('payload', {}).get('headers', [])
+                            header_dict = {h['name']: h['value'] for h in headers}
+                            results.append({
+                                'id': mid,
+                                'message_id': header_dict.get('Message-ID', mid),
+                                'sender': header_dict.get('From', 'Unknown Sender'),
+                                'subject': header_dict.get('Subject', '(No Subject)'),
+                                'date': header_dict.get('Date', ''),
+                                'snippet': msg_meta.get('snippet', ''),
+                                'account': self.settings.gmail_account,
+                                'raw_meta': msg_meta
+                            })
+                        except Exception as fallback_err:
+                            if _http_status(fallback_err) not in _RETRYABLE_STATUS_CODES:
+                                logger.error("Sequential fallback failed for message %s: %s", mid, fallback_err)
+                                permanently_failed_ids.add(mid)
+
+            done_ids = {r['id'] for r in results}
+            pending_ids = [mid for mid in pending_ids if mid not in done_ids and mid not in permanently_failed_ids]
+            attempt += 1
+
+        if pending_ids:
+            logger.error(
+                "Giving up on %d Gmail message(s) after %d retries due to persistent rate limiting/errors: %s",
+                len(pending_ids), max_retries, pending_ids[:10],
+            )
 
         # Sort results in the same order as input messages to preserve ordering
-        msg_id_to_index = {msg['id']: idx for idx, msg in enumerate(messages)}
+        msg_id_to_index = {mid: idx for idx, mid in enumerate(all_ids)}
         results.sort(key=lambda r: msg_id_to_index.get(r['id'], 99999))
 
         return results
@@ -231,44 +279,137 @@ class GmailClient:
             logger.error("Failed to list or fetch Gmail messages: %s", e, exc_info=True)
             return []
 
-    def fetch_full_body(self, msg_id: str) -> str:
-        """Fetch the full body of a message if it passes triage."""
+    @staticmethod
+    def _parse_full_message_body(msg: Dict[str, Any]) -> str:
+        """Extracts plain-text (falling back to HTML, then snippet) body content from a
+        format='full' Gmail message resource."""
+        import base64
+
+        def get_part_body(part: Dict[str, Any]) -> str:
+            part_body = part.get('body', {})
+            data = part_body.get('data', '')
+            if data:
+                return base64.urlsafe_b64decode(data.encode('utf-8')).decode('utf-8', errors='ignore')
+            return ""
+
+        payload = msg.get('payload', {})
+        body = ""
+        parts = payload.get('parts', [])
+        if parts:
+            for part in parts:
+                if part.get('mimeType') == 'text/plain':
+                    body += get_part_body(part)
+                elif part.get('mimeType') == 'text/html' and not body:
+                    body += get_part_body(part)
+                elif 'parts' in part:
+                    for subpart in part['parts']:
+                        if subpart.get('mimeType') == 'text/plain':
+                            body += get_part_body(subpart)
+        else:
+            body = get_part_body(payload)
+
+        return body if body else msg.get('snippet', '')
+
+    def fetch_full_body(self, msg_id: str, max_retries: int = 4) -> str:
+        """Fetch the full body of a single message."""
         if not self.service:
             return ""
         try:
             logger.info("Escalating: Fetching full email payload for message %s", msg_id)
-            msg = self.service.users().messages().get(userId='me', id=msg_id, format='full').execute()
-            
-            payload = msg.get('payload', {})
-            body = ""
-            
-            # Helper function to recursively find body parts
-            def get_part_body(part: Dict[str, Any]) -> str:
-                import base64
-                part_body = part.get('body', {})
-                data = part_body.get('data', '')
-                if data:
-                    return base64.urlsafe_b64decode(data.encode('utf-8')).decode('utf-8', errors='ignore')
-                return ""
+            attempt = 0
+            while True:
+                try:
+                    msg = self.service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+                    break
+                except Exception as e:
+                    if attempt < max_retries and _http_status(e) in _RETRYABLE_STATUS_CODES:
+                        delay = min(2 ** attempt, 30)
+                        logger.warning(
+                            "Gmail full-body fetch rate-limited/transient error for %s, retrying in %ss (attempt %d/%d)",
+                            msg_id, delay, attempt + 1, max_retries,
+                        )
+                        time.sleep(delay)
+                        attempt += 1
+                        continue
+                    raise
 
-            parts = payload.get('parts', [])
-            if parts:
-                for part in parts:
-                    if part.get('mimeType') == 'text/plain':
-                        body += get_part_body(part)
-                    elif part.get('mimeType') == 'text/html' and not body:
-                        body += get_part_body(part)
-                    elif 'parts' in part:
-                        for subpart in part['parts']:
-                            if subpart.get('mimeType') == 'text/plain':
-                                body += get_part_body(subpart)
-            else:
-                body = get_part_body(payload)
-
-            return body if body else msg.get('snippet', '')
+            return self._parse_full_message_body(msg)
         except Exception as e:
             logger.error("Failed to fetch full body for message %s: %s", msg_id, e)
             return ""
+
+    def fetch_full_bodies_batch(self, msg_ids: List[str], max_retries: int = 4) -> Dict[str, str]:
+        """
+        Fetches full body content for multiple messages using Gmail HTTP Batching (up to 100 per
+        HTTP round trip), instead of one sequential request per message. Note this only reduces
+        network round-trip time -- Gmail's quota system still counts each sub-request individually,
+        so this does not reduce API quota usage or 429 risk (retry-with-backoff still applies).
+        Returns a dict of {msg_id: body_text}; ids that ultimately fail are simply omitted.
+        """
+        if not self.service or not msg_ids:
+            return {}
+
+        results: Dict[str, str] = {}
+        permanently_failed_ids = set()
+
+        def batch_callback(request_id, response, exception):
+            if exception is not None:
+                if _http_status(exception) not in _RETRYABLE_STATUS_CODES:
+                    logger.error("Failed to fetch full body for %s: %s", request_id, exception)
+                    permanently_failed_ids.add(request_id)
+                return
+            try:
+                results[request_id] = self._parse_full_message_body(response)
+            except Exception as callback_err:
+                logger.error("Error parsing batch full-body response for %s: %s", request_id, callback_err)
+                permanently_failed_ids.add(request_id)
+
+        chunk_size = 100
+        pending_ids = list(msg_ids)
+        attempt = 0
+
+        while pending_ids and attempt <= max_retries:
+            if attempt > 0:
+                delay = min(2 ** attempt, 30)
+                logger.warning(
+                    "Retrying %d Gmail full-body fetch(es) after rate limiting/transient error "
+                    "(attempt %d/%d, backoff %ss)",
+                    len(pending_ids), attempt, max_retries, delay,
+                )
+                time.sleep(delay)
+
+            for i in range(0, len(pending_ids), chunk_size):
+                chunk_ids = pending_ids[i:i + chunk_size]
+                try:
+                    batch = self.service.new_batch_http_request(callback=batch_callback)
+                    for mid in chunk_ids:
+                        batch.add(
+                            self.service.users().messages().get(userId='me', id=mid, format='full'),
+                            request_id=mid,
+                        )
+                    batch.execute()
+                except Exception as e:
+                    if _http_status(e) in _RETRYABLE_STATUS_CODES:
+                        logger.warning("Gmail full-body batch call rate-limited/transient error: %s", e)
+                        continue
+                    logger.error("Failed to execute Gmail full-body batch: %s. Falling back to sequential...", e)
+                    for mid in chunk_ids:
+                        body = self.fetch_full_body(mid, max_retries=max_retries)
+                        if body:
+                            results[mid] = body
+                        else:
+                            permanently_failed_ids.add(mid)
+
+            pending_ids = [mid for mid in pending_ids if mid not in results and mid not in permanently_failed_ids]
+            attempt += 1
+
+        if pending_ids:
+            logger.error(
+                "Giving up on %d Gmail full-body fetch(es) after %d retries due to persistent rate limiting/errors: %s",
+                len(pending_ids), max_retries, pending_ids[:10],
+            )
+
+        return results
 
     def mark_as_read(self, msg_ids: List[str]) -> bool:
         """Mark a list of Gmail internal message IDs as read by removing the UNREAD label."""

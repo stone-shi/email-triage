@@ -81,6 +81,35 @@ class IMAPClient:
             logger.error("Failed to fetch full body for IMAP UID %s: %s", uid, e)
             return ""
 
+    def fetch_full_bodies_batch(self, uids: List[str], chunk_size: int = 100) -> Dict[str, str]:
+        """
+        Fetches full body content for multiple UIDs over a single IMAP connection using
+        multi-UID FETCH commands (chunked to avoid overly long UID lists in one command),
+        instead of opening a new connection per message. UIDs that can't be resolved are
+        simply omitted from the result.
+        """
+        if not uids:
+            return {}
+
+        results: Dict[str, str] = {}
+        try:
+            logger.info(
+                "Connecting to IMAP server %s:%d to batch-fetch %d full bodies...",
+                self.host, self.port, len(uids),
+            )
+            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+                for i in range(0, len(uids), chunk_size):
+                    chunk = uids[i:i + chunk_size]
+                    try:
+                        for msg in mailbox.fetch(AND(uid=chunk), mark_seen=False):
+                            results[msg.uid] = msg.text or msg.html or ""
+                    except Exception as chunk_err:
+                        logger.error("Failed to batch-fetch IMAP bodies for a chunk: %s", chunk_err)
+        except Exception as e:
+            logger.error("Failed to connect for IMAP batch body fetch: %s", e, exc_info=True)
+
+        return results
+
     def mark_as_read(self, uids: List[str]) -> bool:
         """Mark a list of IMAP message UIDs as read by setting the \\Seen flag."""
         if not uids:

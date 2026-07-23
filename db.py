@@ -316,6 +316,60 @@ class EmailDB:
             logger.error("Failed to get email counts for %s: %s", account or "all accounts", e)
             return counts
 
+    def get_daily_token_stats(self, days: int = 14) -> list:
+        """
+        Per-day input/output token usage for the last `days` days (summed from Level 1 + Level 2
+        prompt/completion tokens actually spent), plus an estimate of tokens saved by the TEI/
+        rerank router intercepting messages before they ever reached Level 1 classification --
+        computed as the count of intercepted messages that day times the average actual Level 1
+        cost observed across all history. Days with no activity are zero-filled so callers get a
+        continuous series. Returned oldest-first as a list of
+        {"day": "YYYY-MM-DD", "input_tokens": int, "output_tokens": int, "tei_saved_tokens": int}.
+        """
+        from datetime import datetime, timezone, timedelta
+
+        today = datetime.now(timezone.utc).date()
+        start_day = today - timedelta(days=days - 1)
+        stats_by_day = {
+            (start_day + timedelta(days=i)).isoformat(): {"input_tokens": 0, "output_tokens": 0, "tei_saved_tokens": 0}
+            for i in range(days)
+        }
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT AVG(level_1_prompt_tokens + level_1_completion_tokens)
+                    FROM email_cache
+                    WHERE level_1_run = 1
+                        AND level_1_prompt_tokens IS NOT NULL
+                        AND level_1_completion_tokens IS NOT NULL
+                """)
+                row = cursor.fetchone()
+                avg_level_1_tokens = row[0] if row and row[0] is not None else 0.0
+
+                cursor.execute("""
+                    SELECT
+                        SUBSTR(processed_at, 1, 10) AS day,
+                        COALESCE(SUM(level_1_prompt_tokens), 0) + COALESCE(SUM(level_2_prompt_tokens), 0) AS input_tokens,
+                        COALESCE(SUM(level_1_completion_tokens), 0) + COALESCE(SUM(level_2_completion_tokens), 0) AS output_tokens,
+                        SUM(CASE WHEN level_1_status IN ('tei_filtered', 'tei_escalated') THEN 1 ELSE 0 END) AS tei_intercepted
+                    FROM email_cache
+                    WHERE SUBSTR(processed_at, 1, 10) >= ?
+                    GROUP BY day
+                """, (start_day.isoformat(),))
+                for day, input_tokens, output_tokens, tei_intercepted in cursor.fetchall():
+                    if day in stats_by_day:
+                        stats_by_day[day] = {
+                            "input_tokens": int(input_tokens or 0),
+                            "output_tokens": int(output_tokens or 0),
+                            "tei_saved_tokens": round((tei_intercepted or 0) * avg_level_1_tokens),
+                        }
+        except Exception as e:
+            logger.error("Failed to compute daily token stats: %s", e)
+
+        return [{"day": day, **vals} for day, vals in sorted(stats_by_day.items())]
+
     def save_triage_result(
         self,
         message_id: str,

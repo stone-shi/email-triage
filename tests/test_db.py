@@ -381,6 +381,80 @@ class TestEmailDBEmailCounts:
         }
 
 
+class TestEmailDBDailyTokenStats:
+    def test_zero_filled_for_empty_history(self, db):
+        stats = db.get_daily_token_stats(days=5)
+        assert len(stats) == 5
+        assert all(
+            s["input_tokens"] == 0 and s["output_tokens"] == 0 and s["tei_saved_tokens"] == 0
+            for s in stats
+        )
+        from datetime import datetime, timezone
+        assert stats[-1]["day"] == datetime.now(timezone.utc).date().isoformat()
+
+    def test_sums_level1_and_level2_tokens_for_today(self, db):
+        db.save_triage_result(
+            message_id="<l1@test.com>", account="acct", sender="s", subject="sub", date_str="d",
+            level_0_status="passed", triage_level=1, tag="notification",
+            level_1_run=True, level_1_prompt_tokens=100, level_1_completion_tokens=20,
+        )
+        db.save_triage_result(
+            message_id="<l2@test.com>", account="acct", sender="s", subject="sub", date_str="d",
+            level_0_status="passed", triage_level=2, tag="vip",
+            level_1_run=True, level_1_prompt_tokens=50, level_1_completion_tokens=10,
+            level_2_run=True, level_2_prompt_tokens=500, level_2_completion_tokens=200,
+        )
+
+        stats = db.get_daily_token_stats(days=3)
+        today = stats[-1]
+        assert today["input_tokens"] == 100 + 50 + 500
+        assert today["output_tokens"] == 20 + 10 + 200
+
+    def test_tei_saved_tokens_estimated_from_average_level1_cost(self, db):
+        # Two real Level 1 runs averaging (120 + 240) / 2 = 180 tokens each.
+        db.save_triage_result(
+            message_id="<l1a@test.com>", account="acct", sender="s", subject="sub", date_str="d",
+            level_0_status="passed", triage_level=1, tag="notification",
+            level_1_run=True, level_1_prompt_tokens=100, level_1_completion_tokens=20,
+        )
+        db.save_triage_result(
+            message_id="<l1b@test.com>", account="acct", sender="s", subject="sub", date_str="d",
+            level_0_status="passed", triage_level=1, tag="notification",
+            level_1_run=True, level_1_prompt_tokens=200, level_1_completion_tokens=40,
+        )
+        # Two TEI-intercepted messages that skipped Level 1 entirely.
+        db.save_triage_result(
+            message_id="<tei1@test.com>", account="acct", sender="s", subject="sub", date_str="d",
+            level_0_status="passed", level_1_status="tei_filtered", triage_level=0, tag="low",
+            level_1_run=False,
+        )
+        db.save_triage_result(
+            message_id="<tei2@test.com>", account="acct", sender="s", subject="sub", date_str="d",
+            level_0_status="passed", level_1_status="tei_escalated", triage_level=2, tag="vip",
+            level_1_run=False,
+        )
+
+        stats = db.get_daily_token_stats(days=3)
+        today = stats[-1]
+        assert today["tei_saved_tokens"] == 360  # 2 intercepted * average 180 tokens/message
+
+    def test_rows_outside_the_window_are_excluded(self, db):
+        db.save_triage_result(
+            message_id="<old@test.com>", account="acct", sender="s", subject="sub", date_str="d",
+            level_0_status="passed", triage_level=1, tag="notification",
+            level_1_run=True, level_1_prompt_tokens=999, level_1_completion_tokens=999,
+        )
+        with db._get_connection() as conn:
+            conn.execute(
+                "UPDATE email_cache SET processed_at = ? WHERE message_id = ?",
+                ("2000-01-01T00:00:00+00:00", "<old@test.com>"),
+            )
+            conn.commit()
+
+        stats = db.get_daily_token_stats(days=5)
+        assert all(s["input_tokens"] == 0 for s in stats)
+
+
 class TestEmailDBSyncSummary:
     def test_get_sync_summary_missing_returns_none(self, db):
         assert db.get_sync_summary("acct@test.com") is None

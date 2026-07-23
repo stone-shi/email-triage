@@ -578,6 +578,21 @@ def _profile_config(name: str) -> Dict[str, Any]:
     }
 
 
+def _profile_token_stats(name: str, days: int = 14) -> Dict[str, Any]:
+    """
+    Daily input/output token usage for one profile over the last `days` days, plus tokens saved
+    by the TEI/rerank router. tei_saved_tokens is forced to 0 for every day when the profile's
+    current config has tei_router_enabled=False, regardless of what historical rows suggest.
+    """
+    db, _, profile_settings = get_resources(name)
+    tei_enabled = bool(profile_settings.triage.tei_router_enabled)
+    daily = db.get_daily_token_stats(days=days)
+    if not tei_enabled:
+        for entry in daily:
+            entry["tei_saved_tokens"] = 0
+    return {"tei_enabled": tei_enabled, "daily": daily}
+
+
 def _dashboard_status() -> Dict[str, Any]:
     """Status payload backing the /api/status route and the web dashboard."""
     profiles: Dict[str, Any] = {}
@@ -588,7 +603,11 @@ def _dashboard_status() -> Dict[str, Any]:
         # Named profiles are always shown, even mid-setup, since the user created them intentionally.
         if name == "default" and not status["configured"]:
             continue
-        profiles[name] = {**status, "config": _profile_config(name)}
+        profiles[name] = {
+            **status,
+            "config": _profile_config(name),
+            "token_stats": _profile_token_stats(name),
+        }
 
     return {
         "scheduler": {
@@ -951,6 +970,13 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
   .progress-bar { background: #e5e7eb; border-radius: 999px; height: 6px; overflow: hidden; }
   .progress-fill { background: #2563eb; height: 100%; }
   .progress-label { font-size: 11px; color: #57606a; margin-top: 3px; }
+  .token-stats { margin-top: 12px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+  .token-summary { font-size: 12px; color: #57606a; margin-bottom: 6px; }
+  .token-chart { display: flex; align-items: flex-end; gap: 3px; height: 48px; }
+  .token-bar { flex: 1; position: relative; background: #bfdbfe; border-radius: 2px 2px 0 0; min-height: 2px; }
+  .token-bar-in { position: absolute; bottom: 0; left: 0; width: 100%; background: #2563eb; border-radius: 2px 2px 0 0; }
+  .token-legend { font-size: 11px; color: #9aa0a6; margin-top: 4px; }
+  .token-legend .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
   .logs-section { margin-top: 28px; }
   .logs-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .logs-header h2 { font-size: 15px; margin: 0; }
@@ -1046,6 +1072,44 @@ function renderConfig(cfg) {
   return '<details class="config"><summary>Configuration</summary><div class="cfg-grid">' + rows + '</div></details>';
 }
 
+function formatTokens(n) {
+  n = n || 0;
+  if (Math.abs(n) >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function renderTokenStats(stats) {
+  if (!stats || !stats.daily || !stats.daily.length) return '';
+  const daily = stats.daily;
+  const today = daily[daily.length - 1];
+  const maxTotal = Math.max(1, ...daily.map(d => d.input_tokens + d.output_tokens));
+
+  const bars = daily.map(d => {
+    const total = d.input_tokens + d.output_tokens;
+    const heightPct = Math.max(Math.round((total / maxTotal) * 100), total > 0 ? 4 : 1);
+    const inputPct = total ? Math.round((d.input_tokens / total) * 100) : 0;
+    const title = d.day + ': ' + formatTokens(d.input_tokens) + ' in / ' + formatTokens(d.output_tokens) + ' out'
+      + (d.tei_saved_tokens ? ' / ~' + formatTokens(d.tei_saved_tokens) + ' saved by TEI' : '');
+    return '<div class="token-bar" title="' + title + '" style="height:' + heightPct + '%">'
+      + '<div class="token-bar-in" style="height:' + inputPct + '%"></div>'
+      + '</div>';
+  }).join('');
+
+  const teiLine = stats.tei_enabled
+    ? 'TEI saved today: ~' + formatTokens(today.tei_saved_tokens)
+    : 'TEI saved today: 0 (disabled)';
+
+  return '<div class="token-stats">'
+    + '<div class="token-summary">Today: ' + formatTokens(today.input_tokens) + ' in &middot; '
+    + formatTokens(today.output_tokens) + ' out &middot; ' + teiLine + '</div>'
+    + '<div class="token-chart">' + bars + '</div>'
+    + '<div class="token-legend"><span class="swatch" style="background:#2563eb"></span>input'
+    + '&nbsp;&nbsp;<span class="swatch" style="background:#bfdbfe"></span>output'
+    + '&nbsp;&nbsp;(last ' + daily.length + ' days)</div>'
+    + '</div>';
+}
+
 function renderProfileCard(name, p) {
   const div = document.createElement('div');
   div.className = 'card';
@@ -1059,6 +1123,7 @@ function renderProfileCard(name, p) {
     + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startSync(\\'' + name + '\\')">Sync Now</button>'
     + '<button class="stop" ' + (p.running ? '' : 'disabled') + ' onclick="stopSync(\\'' + name + '\\')">Stop</button>'
     + '</div>'
+    + renderTokenStats(p.token_stats)
     + renderConfig(p.config);
   return div;
 }

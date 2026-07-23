@@ -667,6 +667,41 @@ class TestDashboardStatusFiltering:
         assert set(status["profiles"].keys()) == {"freshly-created-profile"}
 
 
+class TestProfileTokenStats:
+    def test_passes_through_daily_stats_when_tei_enabled(self, monkeypatch):
+        settings = make_fake_settings()
+        settings.triage.tei_router_enabled = True
+        db = MagicMock(spec=EmailDB)
+        db.get_daily_token_stats.return_value = [
+            {"day": "2026-07-22", "input_tokens": 100, "output_tokens": 20, "tei_saved_tokens": 50},
+            {"day": "2026-07-23", "input_tokens": 200, "output_tokens": 40, "tei_saved_tokens": 90},
+        ]
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
+
+        result = mcp_server._profile_token_stats("default", days=2)
+
+        assert result["tei_enabled"] is True
+        assert result["daily"][0]["tei_saved_tokens"] == 50
+        assert result["daily"][1]["tei_saved_tokens"] == 90
+        db.get_daily_token_stats.assert_called_once_with(days=2)
+
+    def test_zeroes_tei_saved_tokens_when_disabled(self, monkeypatch):
+        settings = make_fake_settings()
+        settings.triage.tei_router_enabled = False
+        db = MagicMock(spec=EmailDB)
+        db.get_daily_token_stats.return_value = [
+            {"day": "2026-07-22", "input_tokens": 100, "output_tokens": 20, "tei_saved_tokens": 50},
+        ]
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
+
+        result = mcp_server._profile_token_stats("default")
+
+        assert result["tei_enabled"] is False
+        assert result["daily"][0]["tei_saved_tokens"] == 0
+        # input/output tokens are untouched, only the TEI estimate is zeroed
+        assert result["daily"][0]["input_tokens"] == 100
+
+
 class TestProfileConfigMasking:
     def test_secrets_are_masked_not_leaked(self, monkeypatch):
         settings = make_fake_settings(
@@ -714,6 +749,9 @@ class TestDashboardRoutes:
         db = MagicMock(spec=EmailDB)
         db.get_sync_summary.return_value = None
         db.get_email_counts.return_value = {"total": 0, "level_0": 0, "level_1": 0, "level_2": 0, "pending_triage": 0}
+        db.get_daily_token_stats.return_value = [
+            {"day": "2026-07-23", "input_tokens": 0, "output_tokens": 0, "tei_saved_tokens": 0},
+        ]
         settings = make_fake_settings(gmail_account="gmail@test.com", imap_login="imap@test.com", triage_api_key="super-secret")
         monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
         monkeypatch.setattr(mcp_server, "list_profile_names", lambda: ["default"])
@@ -738,6 +776,8 @@ class TestDashboardRoutes:
         assert profile_data["gmail"]["progress"] is None
         assert "config" in profile_data
         assert profile_data["config"]["gmail_account"] == "gmail@test.com"
+        assert "token_stats" in profile_data
+        assert profile_data["token_stats"]["daily"][0]["day"] == "2026-07-23"
         # secrets must never appear in the payload, only a presence indicator
         assert "super-secret" not in response.text
         assert profile_data["config"]["triage_api_key"] == "•••• (set)"

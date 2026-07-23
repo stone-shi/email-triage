@@ -35,7 +35,7 @@ def process_account_emails(
 
         # 1. Cache Layer Check
         cached_row = db.get_cached_result(msg_id)
-        if cached_row:
+        if cached_row and cached_row.get("triage_level") is not None:
             t_level = cached_row.get("triage_level", 0)
             c_reason = cached_row.get("reason") or "Cached result"
             c_score = cached_row.get("score", 0.0) if cached_row.get("score") is not None else 0.0

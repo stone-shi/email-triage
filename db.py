@@ -104,6 +104,25 @@ class EmailDB:
                     cursor.execute("ALTER TABLE email_cache ADD COLUMN level_2_model TEXT")
                 except Exception:
                     pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN snippet TEXT")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN is_unread INTEGER")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN source_id TEXT")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN downloaded_at TEXT")
+                except Exception:
+                    pass
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_email_cache_is_unread ON email_cache(is_unread, account)"
+                )
                 # Create basic metrics/tokens log table
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS token_logs (
@@ -127,13 +146,15 @@ class EmailDB:
             raise
 
     def is_processed(self, message_id: str) -> bool:
-        """Check if a Message-ID has already been processed."""
+        """Check if a Message-ID has already been triaged (a row may exist pre-triage from a download-only pass)."""
         if not message_id:
             return False
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT 1 FROM email_cache WHERE message_id = ?", (message_id,))
+                cursor.execute(
+                    "SELECT 1 FROM email_cache WHERE message_id = ? AND triage_level IS NOT NULL", (message_id,)
+                )
                 return cursor.fetchone() is not None
         except Exception as e:
             logger.error("Error checking message_id cache: %s", e)
@@ -177,6 +198,99 @@ class EmailDB:
                 conn.commit()
         except Exception as e:
             logger.error("Error saving sync checkpoint for %s: %s", account, e)
+
+    def save_sync_summary(self, account: str, summary: dict) -> None:
+        """Persist a JSON-encoded last-download summary (timestamp/counts/errors) for an account."""
+        import json
+        self.save_sync_checkpoint(account, json.dumps(summary))
+
+    def get_sync_summary(self, account: str) -> Optional[dict]:
+        """Retrieve the last-download summary previously saved via save_sync_summary, if any."""
+        import json
+        val = self.get_sync_checkpoint(account)
+        if not val:
+            return None
+        try:
+            return json.loads(val)
+        except Exception:
+            return None
+
+    def upsert_email_metadata(
+        self,
+        message_id: str,
+        account: str,
+        sender: Optional[str] = None,
+        subject: Optional[str] = None,
+        date_str: Optional[str] = None,
+        snippet: Optional[str] = None,
+        source_id: Optional[str] = None,
+        email_body: Optional[str] = None,
+        is_unread: Optional[bool] = None,
+    ) -> None:
+        """
+        Download-phase upsert: records mailbox metadata/content for a message ahead of triage,
+        without touching any triage-result columns. Safe to call repeatedly (e.g. every sync tick) —
+        unset fields are preserved via COALESCE rather than overwritten with NULL.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                now = datetime.now(tz=timezone.utc).isoformat()
+                is_unread_int = 1 if is_unread is True else (0 if is_unread is False else None)
+                cursor.execute("""
+                    INSERT INTO email_cache
+                    (message_id, account, sender, subject, date_str, snippet, source_id, email_body,
+                     is_unread, downloaded_at, processed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(message_id) DO UPDATE SET
+                        account = excluded.account,
+                        sender = COALESCE(excluded.sender, email_cache.sender),
+                        subject = COALESCE(excluded.subject, email_cache.subject),
+                        date_str = COALESCE(excluded.date_str, email_cache.date_str),
+                        snippet = COALESCE(excluded.snippet, email_cache.snippet),
+                        source_id = COALESCE(excluded.source_id, email_cache.source_id),
+                        email_body = COALESCE(excluded.email_body, email_cache.email_body),
+                        is_unread = COALESCE(excluded.is_unread, email_cache.is_unread),
+                        downloaded_at = excluded.downloaded_at
+                """, (message_id, account, sender, subject, date_str, snippet, source_id, email_body,
+                      is_unread_int, now, now))
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to upsert email metadata for %s: %s", message_id, e, exc_info=True)
+
+    def get_unread_emails(self, account: Optional[str] = None, limit: Optional[int] = None) -> list:
+        """Retrieve cached emails currently flagged unread, most recently processed first."""
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                query = "SELECT * FROM email_cache WHERE is_unread = 1"
+                params: list = []
+                if account:
+                    query += " AND account = ?"
+                    params.append(account)
+                query += " ORDER BY processed_at DESC"
+                if limit is not None:
+                    query += " LIMIT ?"
+                    params.append(limit)
+                cursor.execute(query, params)
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error("Failed to fetch unread emails: %s", e)
+            return []
+
+    def get_unread_message_ids(self, account: str) -> set:
+        """Retrieve the set of message_ids currently cached as unread for an account."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT message_id FROM email_cache WHERE account = ? AND is_unread = 1", (account,)
+                )
+                return {row[0] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.error("Failed to fetch unread message ids for %s: %s", account, e)
+            return set()
 
     def save_triage_result(
         self,
@@ -225,17 +339,50 @@ class EmailDB:
                 level_2_run_int = 1 if level_2_run is True else (0 if level_2_run is False else None)
                 
                 cursor.execute("""
-                    INSERT OR REPLACE INTO email_cache 
-                    (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, 
-                     reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec, 
-                     level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens, 
+                    INSERT INTO email_cache
+                    (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary,
+                     reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec,
+                     level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens,
                      level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at, triage_level, tag,
                      email_body, tei_enabled, tei_score, tei_decision, level_1_run, level_1_model, level_1_score,
                      level_2_run, level_2_model)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary, 
-                      reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec, 
-                      level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens, 
+                    ON CONFLICT(message_id) DO UPDATE SET
+                        account = excluded.account,
+                        sender = excluded.sender,
+                        subject = excluded.subject,
+                        date_str = excluded.date_str,
+                        level_0_status = excluded.level_0_status,
+                        level_1_status = excluded.level_1_status,
+                        level_2_summary = excluded.level_2_summary,
+                        reason = excluded.reason,
+                        score = excluded.score,
+                        model_used_triage = excluded.model_used_triage,
+                        model_used_summary = excluded.model_used_summary,
+                        level_1_duration_sec = excluded.level_1_duration_sec,
+                        level_2_duration_sec = excluded.level_2_duration_sec,
+                        level_1_prompt_tokens = excluded.level_1_prompt_tokens,
+                        level_1_completion_tokens = excluded.level_1_completion_tokens,
+                        level_2_prompt_tokens = excluded.level_2_prompt_tokens,
+                        level_2_completion_tokens = excluded.level_2_completion_tokens,
+                        level_0_judge_correctness = excluded.level_0_judge_correctness,
+                        level_0_judge_score = excluded.level_0_judge_score,
+                        level_0_judge_reason = excluded.level_0_judge_reason,
+                        processed_at = excluded.processed_at,
+                        triage_level = excluded.triage_level,
+                        tag = excluded.tag,
+                        email_body = COALESCE(excluded.email_body, email_cache.email_body),
+                        tei_enabled = excluded.tei_enabled,
+                        tei_score = excluded.tei_score,
+                        tei_decision = excluded.tei_decision,
+                        level_1_run = excluded.level_1_run,
+                        level_1_model = excluded.level_1_model,
+                        level_1_score = excluded.level_1_score,
+                        level_2_run = excluded.level_2_run,
+                        level_2_model = excluded.level_2_model
+                """, (message_id, account, sender, subject, date_str, level_0_status, level_1_status, level_2_summary,
+                      reason, score, model_used_triage, model_used_summary, level_1_duration_sec, level_2_duration_sec,
+                      level_1_prompt_tokens, level_1_completion_tokens, level_2_prompt_tokens, level_2_completion_tokens,
                       level_0_judge_correctness, level_0_judge_score, level_0_judge_reason, processed_at, triage_level, tag,
                       email_body, tei_enabled_int, tei_score, tei_decision, level_1_run_int, level_1_model, level_1_score,
                       level_2_run_int, level_2_model))

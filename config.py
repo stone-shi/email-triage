@@ -5,6 +5,61 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_duration(value, default_seconds: float = 900.0) -> float:
+    """Parses a duration expressed as seconds (int/float) or a suffixed string like '15m'/'1h'/'45s'/'1d'."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip().lower()
+    if not s:
+        return default_seconds
+    if s[-1] in _DURATION_UNITS:
+        try:
+            return float(s[:-1]) * _DURATION_UNITS[s[-1]]
+        except ValueError:
+            return default_seconds
+    try:
+        return float(s)
+    except ValueError:
+        return default_seconds
+
+
+def list_profile_names() -> List[str]:
+    """Lists all configured profile names (subdirectories under profiles/), always including 'default'."""
+    workspace_root = Path(__file__).parent.resolve()
+    profiles_dir = workspace_root / "profiles"
+    names = sorted(p.name for p in profiles_dir.iterdir() if p.is_dir()) if profiles_dir.exists() else []
+    if "default" not in names:
+        names.append("default")
+    return names
+
+
+class SchedulerSettings(BaseModel):
+    enabled: bool = Field(
+        default_factory=lambda: os.getenv("EMAIL_TRIAGE_SCHEDULER_ENABLED", "true").strip().lower()
+        not in ("false", "0", "no", "")
+    )
+    interval: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_SCHEDULER_INTERVAL", "15m"))
+    max_per_account: Optional[int] = Field(
+        default_factory=lambda: (
+            int(os.environ["EMAIL_TRIAGE_SCHEDULER_MAX_PER_ACCOUNT"])
+            if os.getenv("EMAIL_TRIAGE_SCHEDULER_MAX_PER_ACCOUNT")
+            else None
+        )
+    )
+    days: Optional[int] = Field(
+        default_factory=lambda: (
+            int(os.environ["EMAIL_TRIAGE_SCHEDULER_DAYS"]) if os.getenv("EMAIL_TRIAGE_SCHEDULER_DAYS") else None
+        )
+    )
+
+    @property
+    def interval_seconds(self) -> float:
+        return parse_duration(self.interval)
+
+
 class TriageSettings(BaseModel):
     confidence_threshold: float = 0.8
     triage_type: str = "llm"
@@ -61,6 +116,7 @@ class Settings(BaseSettings):
         return self.smtp_password if self.smtp_password else self.imap_password
 
     triage: TriageSettings = Field(default_factory=TriageSettings)
+    scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
 
     triage_base_url: str = "https://your-llm-proxy.com/v1"
     summary_base_url: str = "https://your-llm-proxy.com/v1"
@@ -181,6 +237,17 @@ class Settings(BaseSettings):
                 logging_data = yaml_data.get("logging", {})
                 if "level" in logging_data and should_apply("EMAIL_TRIAGE_LOG_LEVEL"):
                     self.log_level = logging_data["level"].upper()
+
+                # Map Scheduler section
+                scheduler_data = yaml_data.get("scheduler", {})
+                if "enabled" in scheduler_data and should_apply("EMAIL_TRIAGE_SCHEDULER_ENABLED"):
+                    self.scheduler.enabled = bool(scheduler_data["enabled"])
+                if "interval" in scheduler_data and should_apply("EMAIL_TRIAGE_SCHEDULER_INTERVAL"):
+                    self.scheduler.interval = str(scheduler_data["interval"])
+                if "max_per_account" in scheduler_data and should_apply("EMAIL_TRIAGE_SCHEDULER_MAX_PER_ACCOUNT"):
+                    self.scheduler.max_per_account = int(scheduler_data["max_per_account"])
+                if "days" in scheduler_data and should_apply("EMAIL_TRIAGE_SCHEDULER_DAYS"):
+                    self.scheduler.days = int(scheduler_data["days"])
                     
             except Exception as e:
                 # Fallback gracefully to default initialization strings on error

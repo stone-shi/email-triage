@@ -35,3 +35,10 @@ triage:
 
 logging:
   level: "INFO"
+
+# Background sync scheduler (MCP server, SSE/daemon transport only)
+scheduler:
+  enabled: true
+  interval: "15m"
+  max_per_account: 50
+  days: 7

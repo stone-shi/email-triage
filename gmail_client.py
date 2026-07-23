@@ -202,12 +202,21 @@ class GmailClient:
                 query = f"{query} newer_than:{days}d"
 
             logger.info("Listing Gmail messages with query: '%s'", query)
-            list_params = {'userId': 'me', 'q': query}
-            if max_results is not None:
-                list_params['maxResults'] = min(max_results, 500)
+            messages: List[Dict[str, Any]] = []
+            page_token = None
+            while True:
+                list_params = {'userId': 'me', 'q': query}
+                if page_token:
+                    list_params['pageToken'] = page_token
+                if max_results is not None:
+                    list_params['maxResults'] = min(max_results - len(messages), 500)
 
-            response = self.service.users().messages().list(**list_params).execute()
-            messages = response.get('messages', [])
+                response = self.service.users().messages().list(**list_params).execute()
+                messages.extend(response.get('messages', []))
+
+                page_token = response.get('nextPageToken')
+                if not page_token or (max_results is not None and len(messages) >= max_results):
+                    break
 
             if not messages:
                 logger.info("No new unread Gmail messages found matching query.")

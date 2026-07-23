@@ -6,6 +6,7 @@ Exposes local database access, text search, and email triage pipelines to AI cli
 
 import logging
 import sys
+import threading
 import email.utils
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -30,7 +31,7 @@ from db import EmailDB
 from triage import EmailTriageEngine
 from gmail_client import GmailClient
 from imap_client import IMAPClient
-from config import settings
+from config import settings, list_profile_names
 
 # Initialize FastMCP server
 from mcp.server.transport_security import TransportSecuritySettings
@@ -74,7 +75,7 @@ mcp = RobustFastMCP(
 
 import contextvars
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from starlette.requests import Request
 
 # ContextVar to store the authenticated profile name for the current request
@@ -101,22 +102,19 @@ def load_token_profile_map() -> Dict[str, str]:
             
     # 2. Check profiles/ directories
     profiles_dir = workspace_root / "profiles"
-    if profiles_dir.exists():
-        for p_path in profiles_dir.iterdir():
-            if p_path.is_dir():
-                profile_name = p_path.name
-                profile_env = p_path / ".env"
-                if profile_env.exists():
-                    try:
-                        with open(profile_env, "r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if line and not line.startswith("#") and "=" in line:
-                                    k, v = line.split("=", 1)
-                                    if k.strip() == "EMAIL_TRIAGE_PROFILE_TOKEN":
-                                        token_map[v.strip()] = profile_name
-                    except Exception:
-                        pass
+    for profile_name in list_profile_names():
+        profile_env = profiles_dir / profile_name / ".env"
+        if profile_env.exists():
+            try:
+                with open(profile_env, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            if k.strip() == "EMAIL_TRIAGE_PROFILE_TOKEN":
+                                token_map[v.strip()] = profile_name
+            except Exception:
+                pass
     return token_map
 
 class MCPTokenAuthMiddleware:
@@ -210,6 +208,258 @@ def filter_emails_by_days(emails: List[Dict[str, Any]], days: int) -> List[Dict[
     return filtered
 
 # =====================================================================
+# BACKGROUND SYNC ENGINE (download + reconcile read-status + triage)
+# =====================================================================
+
+_sync_locks: Dict[str, threading.Lock] = {}
+_sync_locks_guard = threading.Lock()
+
+_stop_events: Dict[str, threading.Event] = {}
+_stop_events_guard = threading.Lock()
+
+
+def _get_profile_lock(profile: str) -> threading.Lock:
+    with _sync_locks_guard:
+        return _sync_locks.setdefault(profile, threading.Lock())
+
+
+def _get_stop_event(profile: str) -> threading.Event:
+    with _stop_events_guard:
+        return _stop_events.setdefault(profile, threading.Event())
+
+
+def _run_tiered_triage(
+    engine: Any, db: EmailDB, settings_instance: Any,
+    msg_id: str, account: str, sender: str, subject: str, date_str: str, snippet: str, full_body: str,
+) -> Dict[str, Any]:
+    """
+    Runs the VIP -> Level 0 -> Level 0.5 (TEI router) -> Level 1 (+ premium escalation) -> Level 2
+    tiered pipeline, mirroring the branch logic that used to live inline in fetch_and_process_unread's
+    process_emails closure. Unlike that closure, full_body is always pre-supplied (already downloaded
+    by sync_account) rather than lazily fetched.
+    """
+    if engine.is_vip_sender(sender):
+        summary, _score, _l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
+        db.save_triage_result(
+            msg_id, account, sender, subject, date_str,
+            level_0_status="passed", level_1_status="important", level_2_summary=summary,
+            triage_level=2, tag="vip", email_body=full_body, level_1_run=False, level_2_run=True
+        )
+        return {"triage_level": 2, "tag": "vip"}
+
+    is_noise, l0_reason = engine.run_level_0_static(sender, subject)
+    if is_noise:
+        db.save_triage_result(
+            msg_id, account, sender, subject, date_str,
+            level_0_status="filtered", triage_level=0, tag="low", level_1_run=False, level_2_run=False
+        )
+        return {"triage_level": 0, "tag": "low"}
+
+    tei_lvl, tei_reason, tei_score = engine.run_tei_router(sender, subject, snippet)
+    if tei_lvl == 0:
+        db.save_triage_result(
+            msg_id, account, sender, subject, date_str,
+            level_0_status="passed", level_1_status="tei_filtered", reason=tei_reason,
+            score=tei_score, triage_level=0, tag="low", level_1_run=False, level_2_run=False
+        )
+        return {"triage_level": 0, "tag": "low"}
+    elif tei_lvl == 2:
+        summary, _score, l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
+        db.save_triage_result(
+            msg_id, account, sender, subject, date_str,
+            level_0_status="passed", level_1_status="tei_escalated", level_2_summary=summary,
+            reason=tei_reason, score=tei_score, triage_level=2, tag=l2_tag,
+            email_body=full_body, level_1_run=False, level_2_run=True
+        )
+        return {"triage_level": 2, "tag": l2_tag}
+
+    suggested_lvl, reason, score, l1_tag, _l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
+
+    if score < settings_instance.triage.confidence_threshold:
+        suggested_lvl, reason, score, l1_tag = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
+        reason = f"[Premium Escalated] {reason}"
+
+    if suggested_lvl == 0:
+        db.save_triage_result(
+            msg_id, account, sender, subject, date_str,
+            level_0_status="passed", level_1_status="downgraded", reason=reason, score=score,
+            triage_level=0, tag=l1_tag, email_body=full_body, level_1_run=True, level_2_run=False
+        )
+        return {"triage_level": 0, "tag": l1_tag}
+    elif suggested_lvl == 1:
+        db.save_triage_result(
+            msg_id, account, sender, subject, date_str,
+            level_0_status="passed", level_1_status="unimportant", reason=reason, score=score,
+            triage_level=1, tag=l1_tag, email_body=full_body, level_1_run=True, level_2_run=False
+        )
+        return {"triage_level": 1, "tag": l1_tag}
+    else:
+        summary, sum_score, l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
+        db.save_triage_result(
+            msg_id, account, sender, subject, date_str,
+            level_0_status="passed", level_1_status="important", level_2_summary=summary,
+            reason=reason, score=sum_score, triage_level=2, tag=l2_tag,
+            email_body=full_body, level_1_run=True, level_2_run=True
+        )
+        return {"triage_level": 2, "tag": l2_tag, "summary": summary}
+
+
+def sync_account(
+    db: EmailDB, engine: Any, settings_instance: Any, client: Any, account_label: str,
+    max_results: Optional[int], days: Optional[int],
+    stop_event: Optional[threading.Event] = None,
+) -> Dict[str, Any]:
+    """One download + reconcile + triage pass for a single Gmail/IMAP client."""
+    from datetime import datetime, timezone
+
+    if stop_event and stop_event.is_set():
+        return {
+            "account": account_label, "status": "stopped",
+            "downloaded": 0, "reconciled_read": 0, "triaged": 0, "errors": [],
+        }
+
+    summary: Dict[str, Any] = {
+        "account": account_label, "downloaded": 0, "reconciled_read": 0, "triaged": 0, "errors": [],
+    }
+    try:
+        if isinstance(client, GmailClient):
+            live = client.fetch_unread_messages(max_results=None, days=days)
+        else:
+            live = client.fetch_unread_headers(max_results=None, days=days)
+        live_ids = {e["message_id"] for e in live}
+
+        # Reconcile: previously-cached-unread messages no longer present in the live unread set
+        # have since been read (elsewhere, e.g. webmail) -> flip them to read.
+        newly_read = db.get_unread_message_ids(account_label) - live_ids
+        for mid in newly_read:
+            db.upsert_email_metadata(message_id=mid, account=account_label, is_unread=False)
+        summary["reconciled_read"] = len(newly_read)
+
+        to_process = live[:max_results] if max_results else live
+        for e in to_process:
+            if stop_event and stop_event.is_set():
+                summary["status"] = "stopped"
+                break
+            msg_id = e["message_id"]
+            cached = db.get_cached_result(msg_id)
+            need_body = not cached or not cached.get("email_body")
+            full_body = client.fetch_full_body(e["id"]) if need_body else cached["email_body"]
+            db.upsert_email_metadata(
+                message_id=msg_id, account=account_label, sender=e.get("sender"), subject=e.get("subject"),
+                date_str=e.get("date"), snippet=e.get("snippet"), source_id=str(e.get("id")),
+                email_body=full_body, is_unread=True,
+            )
+            summary["downloaded"] += 1
+            if not cached or cached.get("triage_level") is None:
+                _run_tiered_triage(
+                    engine, db, settings_instance, msg_id, account_label, e.get("sender"), e.get("subject"),
+                    e.get("date"), e.get("snippet"), full_body,
+                )
+                summary["triaged"] += 1
+    except Exception as ex:
+        logger.error("sync_account failed for %s: %s", account_label, ex, exc_info=True)
+        summary["errors"].append(str(ex))
+
+    summary["last_download_at"] = datetime.now(timezone.utc).isoformat()
+    db.save_sync_summary(account_label, summary)
+    return summary
+
+
+def sync_profile(profile: str) -> Dict[str, Any]:
+    """Runs sync_account for both Gmail and IMAP under one profile, guarded by a per-profile lock."""
+    lock = _get_profile_lock(profile)
+    if not lock.acquire(blocking=False):
+        return {"profile": profile, "status": "skipped", "reason": "sync already in progress"}
+    stop_event = _get_stop_event(profile)
+    try:
+        db, engine, profile_settings = get_resources(profile)
+        result: Dict[str, Any] = {"profile": profile, "status": "ok"}
+
+        if not stop_event.is_set():
+            try:
+                gmail = GmailClient(settings_instance=profile_settings)
+                result["gmail"] = sync_account(
+                    db, engine, profile_settings, gmail, profile_settings.gmail_account,
+                    profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
+                    stop_event=stop_event,
+                )
+            except Exception as e:
+                logger.error("Gmail sync failed for profile %s: %s", profile, e, exc_info=True)
+                result["gmail"] = {"errors": [str(e)]}
+
+        if not stop_event.is_set():
+            try:
+                imap = IMAPClient(settings_instance=profile_settings)
+                result["imap"] = sync_account(
+                    db, engine, profile_settings, imap, profile_settings.imap_login,
+                    profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
+                    stop_event=stop_event,
+                )
+            except Exception as e:
+                logger.error("IMAP sync failed for profile %s: %s", profile, e, exc_info=True)
+                result["imap"] = {"errors": [str(e)]}
+
+        if stop_event.is_set():
+            result["status"] = "stopped"
+        return result
+    finally:
+        stop_event.clear()
+        lock.release()
+
+
+def sync_all_profiles() -> Dict[str, Any]:
+    """Runs sync_profile for every configured profile under profiles/."""
+    return {"profiles": {name: sync_profile(name) for name in list_profile_names()}}
+
+
+def _profile_status(name: str) -> Dict[str, Any]:
+    """Current sync status + last-download summary for one profile's Gmail and IMAP accounts."""
+    db, _, profile_settings = get_resources(name)
+    return {
+        "profile": name,
+        "running": _get_profile_lock(name).locked(),
+        "stop_requested": _get_stop_event(name).is_set(),
+        "gmail": {
+            "account": profile_settings.gmail_account,
+            "summary": db.get_sync_summary(profile_settings.gmail_account),
+        },
+        "imap": {
+            "account": profile_settings.imap_login,
+            "summary": db.get_sync_summary(profile_settings.imap_login),
+        },
+    }
+
+
+def _dashboard_status() -> Dict[str, Any]:
+    """Status payload backing the /api/status route and the web dashboard."""
+    return {
+        "scheduler": {
+            "enabled": settings.scheduler.enabled,
+            "interval": settings.scheduler.interval,
+            "interval_seconds": settings.scheduler.interval_seconds,
+        },
+        "profiles": {name: _profile_status(name) for name in list_profile_names()},
+    }
+
+
+def _start_sync(profile: str) -> Dict[str, Any]:
+    """Kicks off a sync in a background thread and returns immediately (does not wait for it)."""
+    if profile.strip().lower() == "all":
+        threading.Thread(target=sync_all_profiles, daemon=True).start()
+    else:
+        threading.Thread(target=lambda: sync_profile(profile), daemon=True).start()
+    return {"status": "started", "profile": profile}
+
+
+def _stop_sync(profile: str) -> Dict[str, Any]:
+    """Requests a cooperative stop of any in-progress sync for the given profile(s)."""
+    names = list_profile_names() if profile.strip().lower() == "all" else [profile]
+    for name in names:
+        _get_stop_event(name).set()
+    return {"status": "stop_requested", "profile": profile}
+
+
+# =====================================================================
 # TOOLS SECTION
 # =====================================================================
 
@@ -242,196 +492,106 @@ def mark_emails_as_read(
 @mcp.tool()
 def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: str = "default") -> str:
     """
-    Triggers unread email ingestion from Gmail and IMAP, runs the multi-tier triage engine,
-    saves details in local cache, and returns results.
-    
-    CRITICAL: This is the ONLY tool that retrieves currently unread emails from the mailbox.
-    It returns triage details and summaries for both newly ingested unread emails and previously 
-    cached unread emails. Always use this tool when asked to fetch, check, or list unread emails.
+    Returns triage details/summaries for currently-unread emails FROM THE LOCAL CACHE.
 
-    :param max_per_source: Maximum number of unread emails to process per account source.
-    :param days: Retrieve only unread emails received within this number of past days.
+    CRITICAL: This tool no longer calls Gmail/IMAP live. The cache is kept fresh by a periodic
+    background sync job (interval configured via `scheduler` settings), which downloads unread
+    mail (including full body), reconciles read/unread status, and triages new mail. Use
+    `trigger_download` to force an immediate refresh, and `get_last_download_time` to check how
+    stale the cached results might be before trusting this output.
+
+    :param max_per_source: Maximum number of cached unread items to return per account source.
+    :param days: Only include unread emails received within this number of past days.
     :param profile: Dynamic profile environment to load (default: "default").
-    :return: A formatted string summary of the processed results.
+    :return: A formatted string summary of currently-unread, cached triage results.
     """
     db, engine, settings = get_resources(profile)
     stats = {
         "scanned": 0,
-        "cached_skipped": 0,
         "level_0_filtered": 0,
         "level_1_unimportant": 0,
-        "important_identified": 0
+        "important_identified": 0,
+        "pending_triage": 0,
     }
-    run_results = []
+    run_results: List[Dict[str, Any]] = []
+    pending: List[Dict[str, Any]] = []
 
-    def process_emails(emails_list: List[Dict[str, Any]], client_source: Any):
-        for email in emails_list:
+    for account in (settings.gmail_account, settings.imap_login):
+        rows = db.get_unread_emails(account=account)
+        rows_for_filter = [{**r, "date": r.get("date_str", "")} for r in rows]
+        rows_for_filter = filter_emails_by_days(rows_for_filter, days)[:max_per_source]
+        for r in rows_for_filter:
             stats["scanned"] += 1
-            msg_id = email["message_id"]
-            subject = email["subject"]
-            sender = email["sender"]
-            date_str = email["date"]
-            snippet = email["snippet"]
-            account = email["account"]
-
-            # Cache Check
-            cached_row = db.get_cached_result(msg_id)
-            if cached_row:
-                stats["cached_skipped"] += 1
-                run_results.append({
-                    "message_id": msg_id,
-                    "subject": subject,
-                    "sender": sender,
-                    "triage_level": cached_row.get("triage_level"),
-                    "tag": cached_row.get("tag"),
-                    "reason": cached_row.get("reason") or "Cached Result",
-                    "summary": cached_row.get("level_2_summary")
-                })
+            if r.get("triage_level") is None:
+                stats["pending_triage"] += 1
+                pending.append(r)
                 continue
-
-            # VIP Sender Check
-            if engine.is_vip_sender(sender):
-                full_body = client_source.fetch_full_body(email["id"])
-                summary, score, l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
-                db.save_triage_result(
-                    msg_id, account, sender, subject, date_str,
-                    level_0_status="passed", level_1_status="important", level_2_summary=summary,
-                    triage_level=2, tag="vip", email_body=full_body, level_1_run=False, level_2_run=True
-                )
-                stats["important_identified"] += 1
-                run_results.append({
-                    "message_id": msg_id, "subject": subject, "sender": sender,
-                    "triage_level": 2, "tag": "vip", "reason": "VIP Whitelist Bypass", "summary": summary
-                })
-                continue
-
-            # Level 0 Static Regex Filter
-            is_noise, l0_reason = engine.run_level_0_static(sender, subject)
-            if is_noise:
-                db.save_triage_result(
-                    msg_id, account, sender, subject, date_str,
-                    level_0_status="filtered", triage_level=0, tag="low", level_1_run=False, level_2_run=False
-                )
+            lvl = r["triage_level"]
+            if lvl == 0:
                 stats["level_0_filtered"] += 1
-                run_results.append({
-                    "message_id": msg_id, "subject": subject, "sender": sender,
-                    "triage_level": 0, "tag": "low", "reason": l0_reason
-                })
-                continue
-
-            # Level 0.5 TEI Router
-            tei_lvl, tei_reason, tei_score = engine.run_tei_router(sender, subject, snippet)
-            if tei_lvl == 0:
-                db.save_triage_result(
-                    msg_id, account, sender, subject, date_str,
-                    level_0_status="passed", level_1_status="tei_filtered", reason=tei_reason,
-                    score=tei_score, triage_level=0, tag="low", level_1_run=False, level_2_run=False
-                )
-                stats["level_0_filtered"] += 1
-                run_results.append({
-                    "message_id": msg_id, "subject": subject, "sender": sender,
-                    "triage_level": 0, "tag": "low", "reason": tei_reason
-                })
-                continue
-            elif tei_lvl == 2:
-                full_body = client_source.fetch_full_body(email["id"])
-                summary, score, l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
-                db.save_triage_result(
-                    msg_id, account, sender, subject, date_str,
-                    level_0_status="passed", level_1_status="tei_escalated", level_2_summary=summary,
-                    reason=tei_reason, score=tei_score, triage_level=2, tag=l2_tag,
-                    email_body=full_body, level_1_run=False, level_2_run=True
-                )
-                stats["important_identified"] += 1
-                run_results.append({
-                    "message_id": msg_id, "subject": subject, "sender": sender,
-                    "triage_level": 2, "tag": l2_tag, "reason": tei_reason, "summary": summary
-                })
-                continue
-
-            # Level 1 classification
-            suggested_lvl, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
-
-            # Confidence escalation check
-            full_body = None
-            if score < settings.triage.confidence_threshold or suggested_lvl > 0:
-                full_body = client_source.fetch_full_body(email["id"])
-            
-            if score < settings.triage.confidence_threshold:
-                suggested_lvl, reason, score, l1_tag = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
-                reason = f"[Premium Escalated] {reason}"
-
-            if suggested_lvl == 0:
-                db.save_triage_result(
-                    msg_id, account, sender, subject, date_str,
-                    level_0_status="passed", level_1_status="downgraded", reason=reason, score=score,
-                    triage_level=0, tag=l1_tag, email_body=full_body, level_1_run=True, level_2_run=False
-                )
-                stats["level_0_filtered"] += 1
-                run_results.append({
-                    "message_id": msg_id, "subject": subject, "sender": sender,
-                    "triage_level": 0, "tag": l1_tag, "reason": reason
-                })
-            elif suggested_lvl == 1:
-                db.save_triage_result(
-                    msg_id, account, sender, subject, date_str,
-                    level_0_status="passed", level_1_status="unimportant", reason=reason, score=score,
-                    triage_level=1, tag=l1_tag, email_body=full_body, level_1_run=True, level_2_run=False
-                )
+            elif lvl == 1:
                 stats["level_1_unimportant"] += 1
-                run_results.append({
-                    "message_id": msg_id, "subject": subject, "sender": sender,
-                    "triage_level": 1, "tag": l1_tag, "reason": reason
-                })
-            elif suggested_lvl == 2:
-                summary, sum_score, l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
-                db.save_triage_result(
-                    msg_id, account, sender, subject, date_str,
-                    level_0_status="passed", level_1_status="important", level_2_summary=summary,
-                    reason=reason, score=sum_score, triage_level=2, tag=l2_tag,
-                    email_body=full_body, level_1_run=True, level_2_run=True
-                )
+            elif lvl == 2:
                 stats["important_identified"] += 1
-                run_results.append({
-                    "message_id": msg_id, "subject": subject, "sender": sender,
-                    "triage_level": 2, "tag": l2_tag, "reason": reason, "summary": summary
-                })
-
-    # 1. Fetch Gmail unread emails
-    try:
-        gmail = GmailClient(settings_instance=settings)
-        gmail_emails = gmail.fetch_unread_messages(max_results=max_per_source, days=days)
-        process_emails(gmail_emails, gmail)
-    except Exception as e:
-        logger.error("Error processing Gmail inside MCP tool: %s", e)
-
-    # 2. Fetch IMAP unread emails
-    try:
-        imap = IMAPClient(settings_instance=settings)
-        imap_emails = imap.fetch_unread_headers(max_results=max_per_source, days=days)
-        process_emails(imap_emails, imap)
-    except Exception as e:
-        logger.error("Error processing IMAP inside MCP tool: %s", e)
+            run_results.append(r)
 
     # Render detailed textual overview for the agent
     lines = [
-        "## Email Triage Execution Summary",
+        "## Email Triage Execution Summary (from local cache)",
         f"- **Total Scanned**: {stats['scanned']}",
-        f"- **Cached Duplicates (Skipped)**: {stats['cached_skipped']}",
         f"- **Level 0 (Noise Filtered)**: {stats['level_0_filtered']}",
         f"- **Level 1 (Low Importance)**: {stats['level_1_unimportant']}",
         f"- **Level 2 (Premium Summarized & Flagged)**: {stats['important_identified']}",
-        "\n### Newly Triaged Items:\n"
+        f"- **Pending Background Triage**: {stats['pending_triage']}",
+        "\n### Unread Items:\n"
     ]
-    
+
     for item in run_results:
+        tag = (item.get("tag") or "untagged").upper()
         lines.append(
-            f"- **[{item['tag'].upper()}]** *{item['sender']}* - **{item['subject']}** (Level {item['triage_level']})"
+            f"- **[{tag}]** *{item.get('sender')}* - **{item.get('subject')}** (Level {item.get('triage_level')})"
         )
-        if item.get("summary"):
-            lines.append(f"  *Summary:* {item['summary']}")
-            
+        if item.get("level_2_summary"):
+            lines.append(f"  *Summary:* {item['level_2_summary']}")
+
+    if pending:
+        lines.append("\n### Pending Background Triage (downloaded, not yet classified):\n")
+        for item in pending:
+            lines.append(f"- *{item.get('sender')}* - **{item.get('subject')}**")
+
     return "\n".join(lines)
+
+
+@mcp.tool()
+def trigger_download(profile: str = "default") -> Dict[str, Any]:
+    """
+    Manually triggers an immediate mailbox sync: downloads currently-unread mail (including full
+    body), reconciles previously-cached-unread messages that have since been read elsewhere, and
+    triages anything not yet classified, caching the results. This normally happens automatically
+    on the background scheduler's interval; use this tool to force a refresh right now.
+
+    :param profile: A specific profile name (default: "default"), or "all" to sync every
+                     configured profile under profiles/ sequentially.
+    :return: A dictionary summarizing the sync per account (counts downloaded/reconciled/triaged),
+             or a "skipped" status if a sync for that profile is already in progress.
+    """
+    if profile.strip().lower() == "all":
+        return sync_all_profiles()
+    return sync_profile(profile)
+
+
+@mcp.tool()
+def get_last_download_time(profile: str = "default") -> Dict[str, Any]:
+    """
+    Returns the last background/manual sync summary (timestamp, counts, errors) for each account
+    in a profile, so callers can judge how fresh fetch_and_process_unread's cached results are.
+
+    :param profile: A specific profile name (default: "default"), or "all" for every profile.
+    :return: A dictionary of per-account last-sync summaries (or None if never synced).
+    """
+    if profile.strip().lower() == "all":
+        return {"profiles": {name: _profile_status(name) for name in list_profile_names()}}
+    return _profile_status(profile)
 
 
 
@@ -597,6 +757,129 @@ async def get_version(request: Request) -> PlainTextResponse:
     return PlainTextResponse(get_version_info())
 
 
+# =====================================================================
+# WEB DASHBOARD (status + manual sync controls)
+# =====================================================================
+
+_DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Email Triage - Sync Dashboard</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .scheduler-info { color: #9aa0a6; margin-bottom: 20px; font-size: 13px; }
+  .global-actions { margin-bottom: 20px; }
+  button { background: #2563eb; color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 8px; }
+  button.stop { background: #dc2626; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .card { background: #1a1d24; border: 1px solid #2a2e37; border-radius: 10px; padding: 16px; }
+  .card h2 { margin: 0 0 8px; font-size: 15px; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
+  .badge.running { background: #1e3a8a; color: #93c5fd; }
+  .badge.idle { background: #1f2937; color: #9ca3af; }
+  .account { border-top: 1px solid #2a2e37; padding-top: 8px; margin-top: 8px; font-size: 13px; }
+  .account .label { color: #9aa0a6; }
+  .errors { color: #f87171; }
+</style>
+</head>
+<body>
+  <h1>Email Triage &mdash; Sync Dashboard</h1>
+  <div class="scheduler-info" id="scheduler-info">Loading...</div>
+  <div class="global-actions">
+    <button onclick="startSync('all')">Sync All</button>
+    <button class="stop" onclick="stopSync('all')">Stop All</button>
+  </div>
+  <div class="grid" id="profiles"></div>
+
+<script>
+async function loadStatus() {
+  const res = await fetch('/api/status');
+  const data = await res.json();
+  const sched = data.scheduler;
+  document.getElementById('scheduler-info').textContent =
+    'Background scheduler: ' + (sched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + sched.interval + ')';
+
+  const container = document.getElementById('profiles');
+  container.innerHTML = '';
+  for (const [name, p] of Object.entries(data.profiles)) {
+    container.appendChild(renderProfileCard(name, p));
+  }
+}
+
+function renderAccount(acct) {
+  const s = acct.summary;
+  if (!s) {
+    return '<div class="account"><div class="label">' + acct.account + '</div><div>never synced</div></div>';
+  }
+  const errors = (s.errors && s.errors.length) ? '<div class="errors">' + s.errors.join('; ') + '</div>' : '';
+  const status = s.status ? ' (' + s.status + ')' : '';
+  return '<div class="account">'
+    + '<div class="label">' + acct.account + status + '</div>'
+    + '<div>last sync: ' + (s.last_download_at || 'n/a') + '</div>'
+    + '<div>downloaded: ' + (s.downloaded ?? 0) + ' &middot; reconciled: ' + (s.reconciled_read ?? 0) + ' &middot; triaged: ' + (s.triaged ?? 0) + '</div>'
+    + errors
+    + '</div>';
+}
+
+function renderProfileCard(name, p) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  const badge = p.running
+    ? '<span class="badge running">running</span>'
+    : '<span class="badge idle">idle</span>';
+  div.innerHTML = '<h2>' + name + ' ' + badge + '</h2>'
+    + renderAccount(p.gmail)
+    + renderAccount(p.imap)
+    + '<div style="margin-top:12px">'
+    + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startSync(\\'' + name + '\\')">Sync Now</button>'
+    + '<button class="stop" ' + (p.running ? '' : 'disabled') + ' onclick="stopSync(\\'' + name + '\\')">Stop</button>'
+    + '</div>';
+  return div;
+}
+
+async function startSync(profile) {
+  await fetch('/api/sync/start?profile=' + encodeURIComponent(profile), { method: 'POST' });
+  loadStatus();
+}
+
+async function stopSync(profile) {
+  await fetch('/api/sync/stop?profile=' + encodeURIComponent(profile), { method: 'POST' });
+  loadStatus();
+}
+
+loadStatus();
+setInterval(loadStatus, 5000);
+</script>
+</body>
+</html>
+"""
+
+
+@mcp.custom_route("/dashboard", methods=["GET"])
+async def dashboard(request: Request) -> HTMLResponse:
+    return HTMLResponse(_DASHBOARD_HTML)
+
+
+@mcp.custom_route("/api/status", methods=["GET"])
+async def api_status(request: Request) -> JSONResponse:
+    return JSONResponse(_dashboard_status())
+
+
+@mcp.custom_route("/api/sync/start", methods=["POST"])
+async def api_sync_start(request: Request) -> JSONResponse:
+    profile = request.query_params.get("profile", "all")
+    return JSONResponse(_start_sync(profile))
+
+
+@mcp.custom_route("/api/sync/stop", methods=["POST"])
+async def api_sync_stop(request: Request) -> JSONResponse:
+    profile = request.query_params.get("profile", "all")
+    return JSONResponse(_stop_sync(profile))
+
+
 if __name__ == "__main__":
     if settings.mcp_transport == "sse":
         import uvicorn
@@ -622,8 +905,28 @@ if __name__ == "__main__":
             )
             server = uvicorn.Server(config)
             await server.serve()
-            
-        anyio.run(run_server)
+
+        async def scheduler_loop():
+            interval = settings.scheduler.interval_seconds
+            logger.info("Background sync scheduler enabled (interval: %ss)", interval)
+            while True:
+                try:
+                    await anyio.to_thread.run_sync(sync_all_profiles)
+                except Exception:
+                    logger.exception("Background sync scheduler tick failed")
+                await anyio.sleep(interval)
+
+        async def run_all():
+            async with anyio.create_task_group() as tg:
+                if settings.scheduler.enabled:
+                    tg.start_soon(scheduler_loop)
+                else:
+                    logger.info("Background sync scheduler disabled via config.")
+                tg.start_soon(run_server)
+
+        anyio.run(run_all)
     else:
         logger.info("Starting Stdio MCP server on stdin/stdout.")
+        if settings.scheduler.enabled:
+            logger.info("Background sync scheduler is only supported under SSE transport; skipping under stdio.")
         mcp.run(transport=settings.mcp_transport)

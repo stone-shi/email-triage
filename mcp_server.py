@@ -4,9 +4,12 @@ Model Context Protocol (MCP) Server for the Optimized Email Triage & Summarizati
 Exposes local database access, text search, and email triage pipelines to AI clients.
 """
 
+import asyncio
 import logging
 import sys
 import threading
+import itertools
+import collections
 import email.utils
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -18,6 +21,35 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stderr)]
 )
 logger = logging.getLogger("email_triage.mcp_server")
+
+# In-memory ring buffer of recent log lines, for the dashboard's live log stream.
+# Each entry is (monotonic sequence number, formatted line) so SSE/poll clients can
+# request only what's new since the last sequence number they saw.
+_log_buffer: collections.deque = collections.deque(maxlen=500)
+_log_seq = itertools.count(1)
+
+
+class _DashboardLogHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            _log_buffer.append((next(_log_seq), self.format(record)))
+        except Exception:
+            pass
+
+
+_dashboard_log_handler = _DashboardLogHandler()
+_dashboard_log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+logging.getLogger().addHandler(_dashboard_log_handler)
+
+
+def _log_lines_since(since_seq: int = 0) -> List[Dict[str, Any]]:
+    """Buffered log lines with seq > since_seq, oldest first."""
+    return [{"seq": seq, "line": line} for seq, line in _log_buffer if seq > since_seq]
+
+
+def _sse_encode(line: str) -> str:
+    """Encodes a (possibly multi-line, e.g. traceback) log line as one SSE 'data:' event."""
+    return "\n".join(f"data: {part}" for part in line.splitlines()) + "\n\n"
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -75,7 +107,7 @@ mcp = RobustFastMCP(
 
 import contextvars
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse
+from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, StreamingResponse
 from starlette.requests import Request
 
 # ContextVar to store the authenticated profile name for the current request
@@ -836,6 +868,15 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
   .cfg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; font-size: 12px; margin-top: 8px; }
   .cfg-key { color: #57606a; }
   .cfg-val { word-break: break-word; }
+  .logs-section { margin-top: 28px; }
+  .logs-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .logs-header h2 { font-size: 15px; margin: 0; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; }
+  .live-dot.disconnected { background: #d0d7de; }
+  #log-console { background: #0f1115; color: #d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 12px; border-radius: 8px; height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  #log-console .lvl-ERROR { color: #f87171; }
+  #log-console .lvl-WARNING { color: #fbbf24; }
+  #log-console .lvl-INFO { color: #d1d5db; }
 </style>
 </head>
 <body>
@@ -846,6 +887,15 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
     <button class="stop" onclick="stopSync('all')">Stop All</button>
   </div>
   <div class="grid" id="profiles"></div>
+
+  <div class="logs-section">
+    <div class="logs-header">
+      <h2>Live Logs</h2>
+      <span class="live-dot" id="log-live-dot"></span>
+      <button onclick="document.getElementById('log-console').textContent = ''">Clear</button>
+    </div>
+    <div id="log-console"></div>
+  </div>
 
 <script>
 async function loadStatus() {
@@ -914,6 +964,37 @@ async function stopSync(profile) {
 
 loadStatus();
 setInterval(loadStatus, 5000);
+
+const MAX_LOG_LINES = 500;
+
+function appendLogLine(line) {
+  const console_ = document.getElementById('log-console');
+  const match = line.match(/\\[(INFO|WARNING|ERROR|CRITICAL|DEBUG)\\]/);
+  const cls = match ? 'lvl-' + match[1] : '';
+  const atBottom = console_.scrollTop + console_.clientHeight >= console_.scrollHeight - 5;
+
+  const row = document.createElement('div');
+  if (cls) row.className = cls;
+  row.textContent = line;
+  console_.appendChild(row);
+
+  while (console_.childNodes.length > MAX_LOG_LINES) {
+    console_.removeChild(console_.firstChild);
+  }
+  if (atBottom) {
+    console_.scrollTop = console_.scrollHeight;
+  }
+}
+
+function connectLogStream() {
+  const dot = document.getElementById('log-live-dot');
+  const source = new EventSource('/api/logs/stream');
+  source.onopen = () => dot.classList.remove('disconnected');
+  source.onerror = () => dot.classList.add('disconnected');
+  source.onmessage = (event) => appendLogLine(event.data);
+}
+
+connectLogStream();
 </script>
 </body>
 </html>
@@ -940,6 +1021,29 @@ async def api_sync_start(request: Request) -> JSONResponse:
 async def api_sync_stop(request: Request) -> JSONResponse:
     profile = request.query_params.get("profile", "all")
     return JSONResponse(_stop_sync(profile))
+
+
+@mcp.custom_route("/api/logs", methods=["GET"])
+async def api_logs(request: Request) -> JSONResponse:
+    since = int(request.query_params.get("since", 0))
+    lines = _log_lines_since(since)
+    return JSONResponse({"logs": lines, "last_seq": lines[-1]["seq"] if lines else since})
+
+
+@mcp.custom_route("/api/logs/stream", methods=["GET"])
+async def api_logs_stream(request: Request) -> StreamingResponse:
+    async def event_generator():
+        last_seq = 0
+        for entry in _log_lines_since(0):
+            last_seq = entry["seq"]
+            yield _sse_encode(entry["line"])
+        while not await request.is_disconnected():
+            await asyncio.sleep(1)
+            for entry in _log_lines_since(last_seq):
+                last_seq = entry["seq"]
+                yield _sse_encode(entry["line"])
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import sys
+import logging
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -525,3 +526,61 @@ class TestDashboardRoutes:
         assert response.json() == {"status": "stop_requested", "profile": "default"}
         assert mcp_server._get_stop_event("default").is_set() is True
         mcp_server._get_stop_event("default").clear()
+
+    def test_api_logs_returns_buffered_lines(self, client):
+        mcp_server._log_buffer.clear()
+        logging.getLogger("email_triage.test_probe").warning("dashboard log route probe")
+
+        response = client.get("/api/logs")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert any("dashboard log route probe" in entry["line"] for entry in data["logs"])
+        assert data["last_seq"] == data["logs"][-1]["seq"]
+
+    def test_api_logs_since_filters_out_old_lines(self, client):
+        mcp_server._log_buffer.clear()
+        logging.getLogger("email_triage.test_probe").warning("old line")
+        first_seq = mcp_server._log_buffer[-1][0]
+        logging.getLogger("email_triage.test_probe").warning("new line")
+
+        response = client.get(f"/api/logs?since={first_seq}")
+
+        lines = [entry["line"] for entry in response.json()["logs"]]
+        assert not any("old line" in l for l in lines)
+        assert any("new line" in l for l in lines)
+
+
+class TestLogBufferHelpers:
+    def test_sse_encode_single_line(self):
+        assert mcp_server._sse_encode("hello") == "data: hello\n\n"
+
+    def test_sse_encode_multi_line_traceback(self):
+        encoded = mcp_server._sse_encode("line1\nline2")
+        assert encoded == "data: line1\ndata: line2\n\n"
+
+    def test_log_lines_since_filters_by_seq(self):
+        mcp_server._log_buffer.clear()
+        seq1 = next(mcp_server._log_seq)
+        mcp_server._log_buffer.append((seq1, "first"))
+        seq2 = next(mcp_server._log_seq)
+        mcp_server._log_buffer.append((seq2, "second"))
+
+        assert [e["line"] for e in mcp_server._log_lines_since(0)] == ["first", "second"]
+        assert [e["line"] for e in mcp_server._log_lines_since(seq1)] == ["second"]
+
+    def test_dashboard_log_handler_captures_records(self):
+        mcp_server._log_buffer.clear()
+
+        logging.getLogger("email_triage.test_probe").warning("probe message xyz")
+
+        lines = [entry["line"] for entry in mcp_server._log_lines_since(0)]
+        assert any("probe message xyz" in line for line in lines)
+
+    def test_buffer_is_bounded(self):
+        mcp_server._log_buffer.clear()
+        test_logger = logging.getLogger("email_triage.test_probe")
+        for i in range(mcp_server._log_buffer.maxlen + 50):
+            test_logger.warning("line %d", i)
+
+        assert len(mcp_server._log_buffer) == mcp_server._log_buffer.maxlen

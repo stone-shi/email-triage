@@ -253,8 +253,9 @@ class EmailTriageEngine:
             ],
             "temperature": 0.0,
             "include_reasoning": False,
+            "stream": False,
         }
-        
+
         try:
             logger.info("Level 1 Triage request sent to custom LiteLLM proxy model: %s", model_name)
             response = self.http_client.post(url, headers=self.triage_headers, json=payload)
@@ -339,8 +340,9 @@ class EmailTriageEngine:
             ],
             "temperature": 0.2,
             "include_reasoning": False,
+            "stream": False,
         }
-        
+
         start_time = time.time()
         try:
             logger.info("Level 2 Triage summary request sent to custom LiteLLM proxy model: %s", model_name)
@@ -415,8 +417,9 @@ class EmailTriageEngine:
             ],
             "temperature": 0.0,
             "include_reasoning": False,
+            "stream": False,
         }
-        
+
         try:
             logger.info("Ambiguity Triage Escalation sent to premium model: %s", self.settings.summary_model)
             response = self.http_client.post(url, headers=self.summary_headers, json=payload)

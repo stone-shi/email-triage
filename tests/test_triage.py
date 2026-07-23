@@ -351,6 +351,48 @@ class TestRunLevel1PremiumEscalation:
         assert "error" in reason.lower()
 
 
+class TestChatCompletionsDisablesStreaming:
+    """
+    Regression coverage: the LLM proxy will return a Server-Sent-Events stream instead of a
+    single JSON body for /chat/completions calls that don't explicitly disable it, which breaks
+    response.json() parsing and silently defaults every classification to Level 2. Every payload
+    must set stream=False.
+    """
+
+    def test_level_1_classification_disables_streaming(self, engine):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": '{"suggested_level": 0, "reason": "r", "confidence_score": 0.9, "tag": "low"}'}}],
+            "usage": {"total_tokens": 40}
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
+            engine.run_level_1_classification("s@t.com", "S", "b")
+            assert mock_post.call_args[1]["json"]["stream"] is False
+
+    def test_level_2_summarization_disables_streaming(self, engine):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": '{"summary": "s", "confidence_score": 0.9, "tag": "personal"}'}}],
+            "usage": {"total_tokens": 40}
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
+            engine.run_level_2_summarization("Subject", "Body long enough to summarize properly.")
+            assert mock_post.call_args[1]["json"]["stream"] is False
+
+    def test_premium_escalation_disables_streaming(self, engine):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": '{"suggested_level": 1, "reason": "r", "confidence_score": 0.85, "tag": "notification"}'}}],
+            "usage": {"total_tokens": 40}
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
+            engine.run_level_1_premium_escalation("s@t.com", "S", "snip", "body")
+            assert mock_post.call_args[1]["json"]["stream"] is False
+
+
 class TestTEIRouter:
     def test_tei_router_disabled(self, engine):
         engine.settings.triage.tei_router_enabled = False

@@ -421,11 +421,12 @@ def sync_account(
     if stop_event and stop_event.is_set():
         return {
             "account": account_label, "status": "stopped",
-            "downloaded": 0, "reconciled_read": 0, "triaged": 0, "errors": [],
+            "downloaded": 0, "reconciled_read": 0, "triaged": 0, "auto_marked_read": 0, "errors": [],
         }
 
     summary: Dict[str, Any] = {
-        "account": account_label, "downloaded": 0, "reconciled_read": 0, "triaged": 0, "errors": [],
+        "account": account_label, "downloaded": 0, "reconciled_read": 0, "triaged": 0,
+        "auto_marked_read": 0, "errors": [],
     }
     try:
         _set_progress(account_label, phase="listing", total=0, processed=0, current_subject=None)
@@ -501,6 +502,31 @@ def sync_account(
                     )
                     summary["triaged"] += 1
                 _set_progress(account_label, processed=idx + 1, current_subject=e.get("subject"))
+
+            # Phase 4: auto-mark-read (opt-in, default off; independently configured per triage
+            # level) -- flip anything that's already been triaged AND shown to the user via
+            # fetch_and_process_unread at least that level's `after_displays` times to read, both
+            # on the mail server and in the local cache.
+            if not (stop_event and stop_event.is_set()):
+                amr = settings_instance.auto_mark_read
+                thresholds = {
+                    level: level_cfg.after_displays
+                    for level, level_cfg in ((0, amr.level_0), (1, amr.level_1), (2, amr.level_2))
+                    if level_cfg.enabled
+                }
+                if thresholds:
+                    candidates = db.get_auto_mark_read_candidates(account_label, thresholds)
+                    source_ids = [c["source_id"] for c in candidates if c.get("source_id")]
+                    if source_ids:
+                        if client.mark_as_read(source_ids):
+                            for c in candidates:
+                                if c.get("source_id"):
+                                    db.upsert_email_metadata(
+                                        message_id=c["message_id"], account=account_label, is_unread=False,
+                                    )
+                            summary["auto_marked_read"] = len(source_ids)
+                        else:
+                            summary["errors"].append("auto-mark-read: failed to mark messages read remotely")
         except Exception as ex:
             logger.error("sync_account failed for %s: %s", account_label, ex, exc_info=True)
             summary["errors"].append(str(ex))
@@ -772,6 +798,10 @@ def fetch_and_process_unread(max_per_source: int = 5, days: int = 7, profile: st
             elif lvl == 2:
                 stats["important_identified"] += 1
             run_results.append(r)
+
+    # A message only counts as "shown" once it's actually rendered to the user below -- pending
+    # (not-yet-triaged) rows don't count, since auto-mark-read also requires a completed triage.
+    db.increment_display_count([r["message_id"] for r in run_results])
 
     # Render detailed textual overview for the agent
     lines = [

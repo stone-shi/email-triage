@@ -318,6 +318,133 @@ class TestSyncAccount:
         assert mcp_server._get_progress("error-acct@test.com") is None
 
 
+def _configure_auto_mark_read(settings, **levels):
+    """
+    Configures settings.auto_mark_read.level_0/1/2 on a MagicMock settings object. `levels`
+    takes level_0=(enabled, after_displays) etc.; any level not passed defaults to disabled.
+    """
+    for name in ("level_0", "level_1", "level_2"):
+        enabled, after_displays = levels.get(name, (False, 1))
+        level_cfg = getattr(settings.auto_mark_read, name)
+        level_cfg.enabled = enabled
+        level_cfg.after_displays = after_displays
+
+
+class TestSyncAccountAutoMarkRead:
+    def _base_db(self):
+        db = MagicMock(spec=EmailDB)
+        db.get_unread_message_ids.return_value = set()
+        db.get_cached_result.return_value = None
+        return db
+
+    def test_all_levels_disabled_does_not_check_candidates(self):
+        db = self._base_db()
+        engine = MagicMock(spec=EmailTriageEngine)
+        client = MagicMock(spec=GmailClient)
+        client.list_unread_ids.return_value = []
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+        _configure_auto_mark_read(settings)
+
+        mcp_server.sync_account(db, engine, settings, client, "acct@test.com", None, 7)
+
+        db.get_auto_mark_read_candidates.assert_not_called()
+        client.mark_as_read.assert_not_called()
+
+    def test_only_enabled_levels_are_passed_as_thresholds(self):
+        db = self._base_db()
+        db.get_auto_mark_read_candidates.return_value = []
+        engine = MagicMock(spec=EmailTriageEngine)
+        client = MagicMock(spec=GmailClient)
+        client.list_unread_ids.return_value = []
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+        # level_0 and level_2 enabled with distinct thresholds; level_1 stays disabled.
+        _configure_auto_mark_read(settings, level_0=(True, 2), level_2=(True, 3))
+
+        mcp_server.sync_account(db, engine, settings, client, "acct@test.com", None, 7)
+
+        db.get_auto_mark_read_candidates.assert_called_once_with("acct@test.com", {0: 2, 2: 3})
+
+    def test_marks_eligible_messages_remotely_and_locally(self):
+        db = self._base_db()
+        db.get_auto_mark_read_candidates.return_value = [
+            {"message_id": "<a@test.com>", "source_id": "1"},
+            {"message_id": "<b@test.com>", "source_id": "2"},
+        ]
+        engine = MagicMock(spec=EmailTriageEngine)
+        client = MagicMock(spec=GmailClient)
+        client.list_unread_ids.return_value = []
+        client.mark_as_read.return_value = True
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+        _configure_auto_mark_read(settings, level_0=(True, 2))
+
+        summary = mcp_server.sync_account(db, engine, settings, client, "acct@test.com", None, 7)
+
+        client.mark_as_read.assert_called_once_with(["1", "2"])
+        db.upsert_email_metadata.assert_any_call(message_id="<a@test.com>", account="acct@test.com", is_unread=False)
+        db.upsert_email_metadata.assert_any_call(message_id="<b@test.com>", account="acct@test.com", is_unread=False)
+        assert summary["auto_marked_read"] == 2
+
+    def test_no_candidates_skips_remote_call(self):
+        db = self._base_db()
+        db.get_auto_mark_read_candidates.return_value = []
+        engine = MagicMock(spec=EmailTriageEngine)
+        client = MagicMock(spec=GmailClient)
+        client.list_unread_ids.return_value = []
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+        _configure_auto_mark_read(settings, level_1=(True, 1))
+
+        summary = mcp_server.sync_account(db, engine, settings, client, "acct@test.com", None, 7)
+
+        client.mark_as_read.assert_not_called()
+        assert summary["auto_marked_read"] == 0
+
+    def test_remote_failure_records_error_and_skips_local_update(self):
+        db = self._base_db()
+        db.get_auto_mark_read_candidates.return_value = [{"message_id": "<c@test.com>", "source_id": "3"}]
+        engine = MagicMock(spec=EmailTriageEngine)
+        client = MagicMock(spec=GmailClient)
+        client.list_unread_ids.return_value = []
+        client.mark_as_read.return_value = False
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+        _configure_auto_mark_read(settings, level_2=(True, 1))
+
+        summary = mcp_server.sync_account(db, engine, settings, client, "acct@test.com", None, 7)
+
+        assert any("auto-mark-read" in e for e in summary["errors"])
+        for call in db.upsert_email_metadata.call_args_list:
+            assert call.kwargs.get("message_id") != "<c@test.com>"
+
+    def test_skipped_when_stop_requested_mid_loop(self):
+        db = self._base_db()
+        engine = MagicMock(spec=EmailTriageEngine)
+        engine.is_vip_sender.return_value = False
+        client = MagicMock(spec=GmailClient)
+        emails = [make_email("<a@test.com>", eid="1"), make_email("<b@test.com>", eid="2")]
+        client.list_unread_ids.return_value = [{"id": "1"}, {"id": "2"}]
+        client._fetch_metadata_batch.return_value = emails
+        client.fetch_full_bodies_batch.return_value = {"1": "body", "2": "body"}
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+        _configure_auto_mark_read(settings, level_0=(True, 1))
+
+        stop_event = threading.Event()
+
+        def stop_after_first(sender, subject):
+            stop_event.set()
+            return (True, "noise")
+
+        engine.run_level_0_static.side_effect = stop_after_first
+
+        mcp_server.sync_account(db, engine, settings, client, "acct@test.com", None, 7, stop_event=stop_event)
+
+        db.get_auto_mark_read_candidates.assert_not_called()
+
+
 class TestSyncProgressHelpers:
     def test_set_get_clear_roundtrip(self):
         account = "progress-helper-acct@test.com"
@@ -455,6 +582,45 @@ class TestFetchAndProcessUnreadCacheOnly:
 
         assert "Pending Background Triage" in result
         assert "Pending Subj" in result
+
+    def test_increments_display_count_for_shown_triaged_rows_only(self, monkeypatch):
+        db = MagicMock(spec=EmailDB)
+        triaged_row = {
+            "message_id": "<shown@test.com>", "sender": "s@x.com", "subject": "Subj",
+            "date_str": "2026-07-20", "triage_level": 0, "tag": "low",
+        }
+        pending_row = {
+            "message_id": "<pending@test.com>", "sender": "s@x.com", "subject": "Pending",
+            "date_str": "2026-07-20", "triage_level": None, "tag": None,
+        }
+
+        def fake_get_unread_emails(account=None, limit=None):
+            return [triaged_row, pending_row] if account == "gmail@test.com" else []
+
+        db.get_unread_emails.side_effect = fake_get_unread_emails
+
+        engine = MagicMock(spec=EmailTriageEngine)
+        settings = MagicMock()
+        settings.gmail_account = "gmail@test.com"
+        settings.imap_login = "imap@test.com"
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, engine, settings))
+
+        mcp_server.fetch_and_process_unread(max_per_source=5, days=30, profile="default")
+
+        db.increment_display_count.assert_called_once_with(["<shown@test.com>"])
+
+    def test_no_triaged_rows_still_calls_increment_with_empty_list(self, monkeypatch):
+        db = MagicMock(spec=EmailDB)
+        db.get_unread_emails.return_value = []
+        engine = MagicMock(spec=EmailTriageEngine)
+        settings = MagicMock()
+        settings.gmail_account = "gmail@test.com"
+        settings.imap_login = "imap@test.com"
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, engine, settings))
+
+        mcp_server.fetch_and_process_unread(max_per_source=5, days=30, profile="default")
+
+        db.increment_display_count.assert_called_once_with([])
 
 
 class TestTriggerDownloadAndLastDownloadTime:

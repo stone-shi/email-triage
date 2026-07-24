@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import Settings, TriageSettings, SchedulerSettings, parse_duration, list_profile_names
+from config import Settings, TriageSettings, SchedulerSettings, AutoMarkReadSettings, parse_duration, list_profile_names
 
 
 class TestTriageSettings:
@@ -250,6 +250,76 @@ class TestSchedulerSettings:
     def test_settings_has_scheduler(self):
         s = Settings()
         assert isinstance(s.scheduler, SchedulerSettings)
+
+
+class TestAutoMarkReadSettings:
+    def test_defaults_all_levels_off(self):
+        with patch.dict(os.environ, {}, clear=True):
+            ams = AutoMarkReadSettings()
+            for level in (ams.level_0, ams.level_1, ams.level_2):
+                assert level.enabled is False
+                assert level.after_displays == 1
+
+    def test_env_overrides_are_independent_per_level(self):
+        with patch.dict(os.environ, {
+            "EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_0_ENABLED": "true",
+            "EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_0_AFTER_DISPLAYS": "1",
+            "EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_2_ENABLED": "false",
+            "EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_2_AFTER_DISPLAYS": "5",
+        }, clear=True):
+            ams = AutoMarkReadSettings()
+            assert ams.level_0.enabled is True
+            assert ams.level_0.after_displays == 1
+            assert ams.level_1.enabled is False  # untouched, stays at default
+            assert ams.level_2.enabled is False
+            assert ams.level_2.after_displays == 5
+
+    def test_settings_has_auto_mark_read(self):
+        s = Settings()
+        assert isinstance(s.auto_mark_read, AutoMarkReadSettings)
+
+
+class TestAutoMarkReadYamlLoading:
+    def test_load_from_yaml_sets_each_level_independently(self):
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            yaml.dump({
+                "auto_mark_read": {
+                    "level_0": {"enabled": True, "after_displays": 1},
+                    "level_1": {"enabled": True, "after_displays": 3},
+                    "level_2": {"enabled": False, "after_displays": 10},
+                }
+            }, f)
+            yaml_path = f.name
+
+        try:
+            with patch.dict(os.environ, {}, clear=True):
+                s = Settings(_env_file=None)
+                s.workspace_dir = Path(yaml_path).parent
+                s.load_from_yaml(yaml_path=Path(yaml_path), env_file=None)
+                assert s.auto_mark_read.level_0.enabled is True
+                assert s.auto_mark_read.level_0.after_displays == 1
+                assert s.auto_mark_read.level_1.enabled is True
+                assert s.auto_mark_read.level_1.after_displays == 3
+                assert s.auto_mark_read.level_2.enabled is False
+                assert s.auto_mark_read.level_2.after_displays == 10
+        finally:
+            os.unlink(yaml_path)
+
+    def test_yaml_does_not_override_env_per_level(self):
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            yaml.dump({"auto_mark_read": {"level_0": {"enabled": True}}}, f)
+            yaml_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_0_ENABLED": "false"}, clear=True):
+                s = Settings(_env_file=None)
+                s.workspace_dir = Path(yaml_path).parent
+                s.load_from_yaml(yaml_path=Path(yaml_path), env_file=None)
+                assert s.auto_mark_read.level_0.enabled is False
+        finally:
+            os.unlink(yaml_path)
 
 
 class TestListProfileNames:

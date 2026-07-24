@@ -60,6 +60,56 @@ class SchedulerSettings(BaseModel):
         return parse_duration(self.interval)
 
 
+class AutoMarkReadLevel0Settings(BaseModel):
+    enabled: bool = Field(
+        default_factory=lambda: os.getenv("EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_0_ENABLED", "false").strip().lower()
+        not in ("false", "0", "no", "")
+    )
+    after_displays: int = Field(
+        default_factory=lambda: (
+            int(os.environ["EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_0_AFTER_DISPLAYS"])
+            if os.getenv("EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_0_AFTER_DISPLAYS")
+            else 1
+        )
+    )
+
+
+class AutoMarkReadLevel1Settings(BaseModel):
+    enabled: bool = Field(
+        default_factory=lambda: os.getenv("EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_1_ENABLED", "false").strip().lower()
+        not in ("false", "0", "no", "")
+    )
+    after_displays: int = Field(
+        default_factory=lambda: (
+            int(os.environ["EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_1_AFTER_DISPLAYS"])
+            if os.getenv("EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_1_AFTER_DISPLAYS")
+            else 1
+        )
+    )
+
+
+class AutoMarkReadLevel2Settings(BaseModel):
+    enabled: bool = Field(
+        default_factory=lambda: os.getenv("EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_2_ENABLED", "false").strip().lower()
+        not in ("false", "0", "no", "")
+    )
+    after_displays: int = Field(
+        default_factory=lambda: (
+            int(os.environ["EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_2_AFTER_DISPLAYS"])
+            if os.getenv("EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_2_AFTER_DISPLAYS")
+            else 1
+        )
+    )
+
+
+class AutoMarkReadSettings(BaseModel):
+    """Each triage level is independently configured -- e.g. level 0 (noise) can be auto-marked
+    read after a single view while level 2 (important) stays off entirely."""
+    level_0: AutoMarkReadLevel0Settings = Field(default_factory=AutoMarkReadLevel0Settings)
+    level_1: AutoMarkReadLevel1Settings = Field(default_factory=AutoMarkReadLevel1Settings)
+    level_2: AutoMarkReadLevel2Settings = Field(default_factory=AutoMarkReadLevel2Settings)
+
+
 class TriageSettings(BaseModel):
     confidence_threshold: float = 0.8
     triage_type: str = "llm"
@@ -117,6 +167,7 @@ class Settings(BaseSettings):
 
     triage: TriageSettings = Field(default_factory=TriageSettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
+    auto_mark_read: AutoMarkReadSettings = Field(default_factory=AutoMarkReadSettings)
 
     triage_base_url: str = "https://your-llm-proxy.com/v1"
     summary_base_url: str = "https://your-llm-proxy.com/v1"
@@ -248,7 +299,19 @@ class Settings(BaseSettings):
                     self.scheduler.max_per_account = int(scheduler_data["max_per_account"])
                 if "days" in scheduler_data and should_apply("EMAIL_TRIAGE_SCHEDULER_DAYS"):
                     self.scheduler.days = int(scheduler_data["days"])
-                    
+
+                # Map Auto Mark Read section -- each triage level configured independently
+                auto_mark_read_data = yaml_data.get("auto_mark_read", {})
+                for lvl in (0, 1, 2):
+                    level_data = auto_mark_read_data.get(f"level_{lvl}", {})
+                    level_settings = getattr(self.auto_mark_read, f"level_{lvl}")
+                    if "enabled" in level_data and should_apply(f"EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_{lvl}_ENABLED"):
+                        level_settings.enabled = bool(level_data["enabled"])
+                    if "after_displays" in level_data and should_apply(
+                        f"EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_{lvl}_AFTER_DISPLAYS"
+                    ):
+                        level_settings.after_displays = int(level_data["after_displays"])
+
             except Exception as e:
                 # Fallback gracefully to default initialization strings on error
                 pass

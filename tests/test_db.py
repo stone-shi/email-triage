@@ -375,6 +375,107 @@ class TestEmailDBUnreadQueries:
         assert ids == {"<x1@test.com>"}
 
 
+class TestEmailDBDisplayCountAndAutoMarkRead:
+    def test_increment_display_count_starts_from_zero(self, db):
+        db.upsert_email_metadata(message_id="<d1@test.com>", account="acct@test.com")
+        db.increment_display_count(["<d1@test.com>"])
+        row = db.get_cached_result("<d1@test.com>")
+        assert row["display_count"] == 1
+
+    def test_increment_display_count_accumulates_across_calls(self, db):
+        db.upsert_email_metadata(message_id="<d2@test.com>", account="acct@test.com")
+        db.increment_display_count(["<d2@test.com>"])
+        db.increment_display_count(["<d2@test.com>"])
+        db.increment_display_count(["<d2@test.com>"])
+        row = db.get_cached_result("<d2@test.com>")
+        assert row["display_count"] == 3
+
+    def test_increment_display_count_empty_list_is_a_noop(self, db):
+        db.increment_display_count([])  # should not raise
+
+    def test_get_auto_mark_read_candidates_requires_triaged_and_unread(self, db):
+        db.save_triage_result(
+            message_id="<e1@test.com>", account="acct@test.com", sender="s", subject="s",
+            date_str="d", level_0_status="passed", triage_level=0,
+        )
+        db.upsert_email_metadata(message_id="<e1@test.com>", account="acct@test.com", source_id="src-1", is_unread=True)
+        db.increment_display_count(["<e1@test.com>"])
+
+        # Not yet triaged -- should never qualify regardless of display count.
+        db.upsert_email_metadata(message_id="<e2@test.com>", account="acct@test.com", source_id="src-2", is_unread=True)
+        db.increment_display_count(["<e2@test.com>"])
+
+        # Triaged but not shown enough times yet.
+        db.save_triage_result(
+            message_id="<e3@test.com>", account="acct@test.com", sender="s", subject="s",
+            date_str="d", level_0_status="passed", triage_level=1,
+        )
+        db.upsert_email_metadata(message_id="<e3@test.com>", account="acct@test.com", source_id="src-3", is_unread=True)
+
+        candidates = db.get_auto_mark_read_candidates("acct@test.com", {0: 1, 1: 1})
+
+        assert {c["message_id"] for c in candidates} == {"<e1@test.com>"}
+        assert candidates[0]["source_id"] == "src-1"
+
+    def test_get_auto_mark_read_candidates_applies_threshold_independently_per_level(self, db):
+        # Level 0 needs 1 display, level 2 needs 3 -- each message is checked against its own
+        # level's threshold, not a single shared one.
+        db.save_triage_result(
+            message_id="<g1@test.com>", account="acct@test.com", sender="s", subject="s",
+            date_str="d", level_0_status="passed", triage_level=0,
+        )
+        db.upsert_email_metadata(message_id="<g1@test.com>", account="acct@test.com", source_id="src-1", is_unread=True)
+        db.increment_display_count(["<g1@test.com>"])  # 1 display -- meets level 0's threshold
+
+        db.save_triage_result(
+            message_id="<g2@test.com>", account="acct@test.com", sender="s", subject="s",
+            date_str="d", level_0_status="passed", triage_level=2,
+        )
+        db.upsert_email_metadata(message_id="<g2@test.com>", account="acct@test.com", source_id="src-2", is_unread=True)
+        db.increment_display_count(["<g2@test.com>"])  # 1 display -- below level 2's threshold of 3
+
+        candidates = db.get_auto_mark_read_candidates("acct@test.com", {0: 1, 2: 3})
+
+        assert {c["message_id"] for c in candidates} == {"<g1@test.com>"}
+
+    def test_get_auto_mark_read_candidates_omitted_level_never_qualifies(self, db):
+        # Level 1 isn't in thresholds at all (i.e. disabled) -- must be excluded no matter how
+        # many times it's been displayed.
+        db.save_triage_result(
+            message_id="<h1@test.com>", account="acct@test.com", sender="s", subject="s",
+            date_str="d", level_0_status="passed", triage_level=1,
+        )
+        db.upsert_email_metadata(message_id="<h1@test.com>", account="acct@test.com", source_id="src-1", is_unread=True)
+        for _ in range(10):
+            db.increment_display_count(["<h1@test.com>"])
+
+        candidates = db.get_auto_mark_read_candidates("acct@test.com", {0: 1, 2: 1})
+
+        assert candidates == []
+
+    def test_get_auto_mark_read_candidates_empty_thresholds_returns_nothing(self, db):
+        db.save_triage_result(
+            message_id="<h2@test.com>", account="acct@test.com", sender="s", subject="s",
+            date_str="d", level_0_status="passed", triage_level=0,
+        )
+        db.upsert_email_metadata(message_id="<h2@test.com>", account="acct@test.com", source_id="src-2", is_unread=True)
+        db.increment_display_count(["<h2@test.com>"])
+
+        assert db.get_auto_mark_read_candidates("acct@test.com", {}) == []
+
+    def test_get_auto_mark_read_candidates_excludes_already_read(self, db):
+        db.save_triage_result(
+            message_id="<f1@test.com>", account="acct@test.com", sender="s", subject="s",
+            date_str="d", level_0_status="passed", triage_level=2,
+        )
+        db.upsert_email_metadata(message_id="<f1@test.com>", account="acct@test.com", source_id="src-1", is_unread=False)
+        db.increment_display_count(["<f1@test.com>"])
+
+        candidates = db.get_auto_mark_read_candidates("acct@test.com", {2: 1})
+
+        assert candidates == []
+
+
 class TestEmailDBEmailCounts:
     def test_counts_by_level_and_pending(self, db):
         db.upsert_email_metadata(message_id="<pending@test.com>", account="acct-a@test.com")

@@ -120,6 +120,10 @@ class EmailDB:
                     cursor.execute("ALTER TABLE email_cache ADD COLUMN downloaded_at TEXT")
                 except Exception:
                     pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN display_count INTEGER")
+                except Exception:
+                    pass
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_email_cache_is_unread ON email_cache(is_unread, account)"
                 )
@@ -335,6 +339,54 @@ class EmailDB:
         except Exception as e:
             logger.error("Failed to fetch triaged message ids for %s: %s", account, e)
             return set()
+
+    def increment_display_count(self, message_ids: List[str]) -> None:
+        """
+        Bumps the display_count for each message_id by 1 -- called whenever a message is
+        actually rendered to the user (e.g. via fetch_and_process_unread), so auto-mark-read
+        can require a message to have been shown at least N times before flipping it to read.
+        """
+        if not message_ids:
+            return
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.executemany(
+                    "UPDATE email_cache SET display_count = COALESCE(display_count, 0) + 1 WHERE message_id = ?",
+                    [(mid,) for mid in message_ids],
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error("Failed to increment display count: %s", e)
+
+    def get_auto_mark_read_candidates(self, account: str, thresholds: Dict[int, int]) -> List[Dict[str, Any]]:
+        """
+        Retrieve unread messages for an account eligible for automatic mark-as-read, per the
+        given {triage_level: min_displays} thresholds -- only triage_level(s) present in
+        `thresholds` are ever returned (levels with auto-mark-read disabled should simply be
+        omitted from the dict by the caller), and each is matched against its own display_count
+        floor rather than one shared value.
+        """
+        if not thresholds:
+            return []
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                clauses = []
+                params: list = [account]
+                for level, min_displays in thresholds.items():
+                    clauses.append("(triage_level = ? AND COALESCE(display_count, 0) >= ?)")
+                    params.extend([level, min_displays])
+                cursor.execute(
+                    f"""SELECT message_id, source_id, triage_level FROM email_cache
+                        WHERE account = ? AND is_unread = 1 AND ({" OR ".join(clauses)})""",
+                    params,
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error("Failed to fetch auto-mark-read candidates for %s: %s", account, e)
+            return []
 
     def get_email_counts(self, account: Optional[str] = None) -> Dict[str, int]:
         """Aggregate cached-email counts by triage level, optionally scoped to one account."""

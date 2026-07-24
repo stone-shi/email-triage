@@ -42,3 +42,19 @@ scheduler:
   interval: "15m"
   max_per_account: 50
   days: 7
+
+# Automatically mark already-triaged unread emails as read -- both on the mail server and in
+# the local cache -- once they've been shown via fetch_and_process_unread at least
+# `after_displays` times. Applied by the background sync scheduler on each tick. Each triage
+# level is configured independently: e.g. auto-mark level 0 (noise) after a single view while
+# leaving level 2 (important) off entirely.
+auto_mark_read:
+  level_0:
+    enabled: false
+    after_displays: 1
+  level_1:
+    enabled: false
+    after_displays: 1
+  level_2:
+    enabled: false
+    after_displays: 1

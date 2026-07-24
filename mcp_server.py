@@ -1213,6 +1213,11 @@ function renderTokenStats(stats) {
     + '</div>';
 }
 
+// Native <details> elements lose their open/closed state whenever the periodic poll below
+// rebuilds the DOM from scratch -- persist it here (keyed by profile name) and restore it
+// on each render instead of always defaulting to closed.
+const configOpenState = {};
+
 function renderProfileCard(name, p) {
   const div = document.createElement('div');
   div.className = 'card';
@@ -1228,6 +1233,12 @@ function renderProfileCard(name, p) {
     + '</div>'
     + renderTokenStats(p.token_stats)
     + renderConfig(p.config);
+
+  const details = div.querySelector('details.config');
+  if (details) {
+    details.open = !!configOpenState[name];
+    details.addEventListener('toggle', () => { configOpenState[name] = details.open; });
+  }
   return div;
 }
 

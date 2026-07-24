@@ -1,7 +1,7 @@
 llm:
   base_url: "https://your-llm-proxy.com/v1"
-  triage_model: "homesrv/gemma-4-e2b-it"
-  summary_model: "deepseek/deepseek-v4-flash"
+  triage_model: "deepseek-v4-flash"
+  summary_model: "deepseek-v4-pro"
 
 triage:
   confidence_threshold: 0.8

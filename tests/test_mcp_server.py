@@ -498,6 +498,52 @@ class TestSyncProfile:
         assert result["imap"] == {"account": "imap@test.com"}
         assert set(calls) == {"gmail@test.com", "imap@test.com"}
 
+    def test_skips_both_sides_when_both_are_placeholder(self, monkeypatch):
+        # This is the "default" profile's normal state -- list_profile_names() always includes
+        # it even when it was never actually configured, so neither side should ever be attempted.
+        fake_db = MagicMock(spec=EmailDB)
+        fake_engine = MagicMock(spec=EmailTriageEngine)
+        fake_settings = MagicMock()
+        fake_settings.gmail_account = mcp_server._PLACEHOLDER_GMAIL_ACCOUNT
+        fake_settings.imap_login = mcp_server._PLACEHOLDER_IMAP_LOGIN
+
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (fake_db, fake_engine, fake_settings))
+        gmail_ctor = MagicMock(side_effect=AssertionError("GmailClient should not be constructed"))
+        imap_ctor = MagicMock(side_effect=AssertionError("IMAPClient should not be constructed"))
+        monkeypatch.setattr(mcp_server, "GmailClient", gmail_ctor)
+        monkeypatch.setattr(mcp_server, "IMAPClient", imap_ctor)
+
+        result = mcp_server.sync_profile("default")
+
+        gmail_ctor.assert_not_called()
+        imap_ctor.assert_not_called()
+        assert result["gmail"] == {"status": "skipped", "reason": "gmail_account not configured"}
+        assert result["imap"] == {"status": "skipped", "reason": "imap_login not configured"}
+        assert result["status"] == "ok"
+
+    def test_skips_only_the_placeholder_side(self, monkeypatch):
+        # A profile with real Gmail creds but no IMAP setup (or vice versa) should still sync
+        # the configured side normally.
+        fake_db = MagicMock(spec=EmailDB)
+        fake_engine = MagicMock(spec=EmailTriageEngine)
+        fake_settings = MagicMock()
+        fake_settings.gmail_account = "real@gmail.com"
+        fake_settings.imap_login = mcp_server._PLACEHOLDER_IMAP_LOGIN
+        fake_settings.scheduler.max_per_account = None
+        fake_settings.scheduler.days = 7
+
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (fake_db, fake_engine, fake_settings))
+        monkeypatch.setattr(mcp_server, "GmailClient", lambda settings_instance: MagicMock(spec=GmailClient))
+        imap_ctor = MagicMock(side_effect=AssertionError("IMAPClient should not be constructed"))
+        monkeypatch.setattr(mcp_server, "IMAPClient", imap_ctor)
+        monkeypatch.setattr(mcp_server, "sync_account", lambda db, engine, settings, client, account_label, max_results, days, stop_event=None: {"account": account_label})
+
+        result = mcp_server.sync_profile("gmail-only-profile")
+
+        imap_ctor.assert_not_called()
+        assert result["gmail"] == {"account": "real@gmail.com"}
+        assert result["imap"] == {"status": "skipped", "reason": "imap_login not configured"}
+
     def test_concurrent_calls_skip_second(self, monkeypatch):
         release = threading.Event()
         entered = threading.Event()

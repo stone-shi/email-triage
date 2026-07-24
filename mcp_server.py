@@ -538,8 +538,18 @@ def sync_account(
     return summary
 
 
+_PLACEHOLDER_GMAIL_ACCOUNT = "your_email@gmail.com"
+_PLACEHOLDER_IMAP_LOGIN = "your_email@domain.com"
+
+
 def sync_profile(profile: str) -> Dict[str, Any]:
-    """Runs sync_account for both Gmail and IMAP under one profile, guarded by a per-profile lock."""
+    """
+    Runs sync_account for both Gmail and IMAP under one profile, guarded by a per-profile lock.
+    Each side is skipped (not attempted at all) if its identity is still at the uninitialized
+    placeholder default -- notably, `list_profile_names()` always includes "default", so an
+    unconfigured "default" profile directory would otherwise be synced (and fail loudly with
+    auth errors) on every scheduler tick even though no one asked for it to exist.
+    """
     lock = _get_profile_lock(profile)
     if not lock.acquire(blocking=False):
         return {"profile": profile, "status": "skipped", "reason": "sync already in progress"}
@@ -549,28 +559,34 @@ def sync_profile(profile: str) -> Dict[str, Any]:
         result: Dict[str, Any] = {"profile": profile, "status": "ok"}
 
         if not stop_event.is_set():
-            try:
-                gmail = GmailClient(settings_instance=profile_settings)
-                result["gmail"] = sync_account(
-                    db, engine, profile_settings, gmail, profile_settings.gmail_account,
-                    profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
-                    stop_event=stop_event,
-                )
-            except Exception as e:
-                logger.error("Gmail sync failed for profile %s: %s", profile, e, exc_info=True)
-                result["gmail"] = {"errors": [str(e)]}
+            if profile_settings.gmail_account == _PLACEHOLDER_GMAIL_ACCOUNT:
+                result["gmail"] = {"status": "skipped", "reason": "gmail_account not configured"}
+            else:
+                try:
+                    gmail = GmailClient(settings_instance=profile_settings)
+                    result["gmail"] = sync_account(
+                        db, engine, profile_settings, gmail, profile_settings.gmail_account,
+                        profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
+                        stop_event=stop_event,
+                    )
+                except Exception as e:
+                    logger.error("Gmail sync failed for profile %s: %s", profile, e, exc_info=True)
+                    result["gmail"] = {"errors": [str(e)]}
 
         if not stop_event.is_set():
-            try:
-                imap = IMAPClient(settings_instance=profile_settings)
-                result["imap"] = sync_account(
-                    db, engine, profile_settings, imap, profile_settings.imap_login,
-                    profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
-                    stop_event=stop_event,
-                )
-            except Exception as e:
-                logger.error("IMAP sync failed for profile %s: %s", profile, e, exc_info=True)
-                result["imap"] = {"errors": [str(e)]}
+            if profile_settings.imap_login == _PLACEHOLDER_IMAP_LOGIN:
+                result["imap"] = {"status": "skipped", "reason": "imap_login not configured"}
+            else:
+                try:
+                    imap = IMAPClient(settings_instance=profile_settings)
+                    result["imap"] = sync_account(
+                        db, engine, profile_settings, imap, profile_settings.imap_login,
+                        profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
+                        stop_event=stop_event,
+                    )
+                except Exception as e:
+                    logger.error("IMAP sync failed for profile %s: %s", profile, e, exc_info=True)
+                    result["imap"] = {"errors": [str(e)]}
 
         if stop_event.is_set():
             result["status"] = "stopped"
@@ -583,10 +599,6 @@ def sync_profile(profile: str) -> Dict[str, Any]:
 def sync_all_profiles() -> Dict[str, Any]:
     """Runs sync_profile for every configured profile under profiles/."""
     return {"profiles": {name: sync_profile(name) for name in list_profile_names()}}
-
-
-_PLACEHOLDER_GMAIL_ACCOUNT = "your_email@gmail.com"
-_PLACEHOLDER_IMAP_LOGIN = "your_email@domain.com"
 
 
 def _is_configured(profile_settings: Any) -> bool:

@@ -231,15 +231,17 @@ class GmailClient:
 
         return results
 
-    def fetch_unread_messages(
+    def list_unread_ids(
         self,
         query: str = "is:unread",
         max_results: Optional[int] = None,
         days: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
-        Fetches metadata for unread messages matching the query.
-        Uses format='metadata' and batch requests for efficiency.
+        Lists bare {id, threadId} entries for messages matching the query via `messages.list`
+        pagination only -- no per-message metadata fetch. Cheap relative to metadata/full-body
+        fetches, so callers that already know some of these ids (e.g. from a prior sync tick)
+        can skip metadata fetching for them instead of always resolving the whole result set.
         """
         if not self.service:
             logger.error("Gmail service client is not initialized.")
@@ -266,18 +268,31 @@ class GmailClient:
                 if not page_token or (max_results is not None and len(messages) >= max_results):
                     break
 
-            if not messages:
-                logger.info("No new unread Gmail messages found matching query.")
-                return []
-
             if max_results is not None:
                 messages = messages[:max_results]
 
-            logger.info("Found %d unread messages. Fetching metadata using HTTP batching...", len(messages))
-            return self._fetch_metadata_batch(messages)
+            return messages
         except Exception as e:
-            logger.error("Failed to list or fetch Gmail messages: %s", e, exc_info=True)
+            logger.error("Failed to list Gmail messages: %s", e, exc_info=True)
             return []
+
+    def fetch_unread_messages(
+        self,
+        query: str = "is:unread",
+        max_results: Optional[int] = None,
+        days: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetches metadata for unread messages matching the query.
+        Uses format='metadata' and batch requests for efficiency.
+        """
+        messages = self.list_unread_ids(query=query, max_results=max_results, days=days)
+        if not messages:
+            logger.info("No new unread Gmail messages found matching query.")
+            return []
+
+        logger.info("Found %d unread messages. Fetching metadata using HTTP batching...", len(messages))
+        return self._fetch_metadata_batch(messages)
 
     @staticmethod
     def _parse_full_message_body(msg: Dict[str, Any]) -> str:

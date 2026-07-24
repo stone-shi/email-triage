@@ -2,7 +2,7 @@ import sqlite3
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 from config import settings
 
 logger = logging.getLogger("email_triage.db")
@@ -290,6 +290,50 @@ class EmailDB:
                 return {row[0] for row in cursor.fetchall()}
         except Exception as e:
             logger.error("Failed to fetch unread message ids for %s: %s", account, e)
+            return set()
+
+    def get_known_source_metadata(self, account: str, source_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Retrieve cached message_id/sender/subject/date_str/snippet for Gmail internal ids
+        (source_id) we've already downloaded metadata for, so a caller can skip re-fetching
+        metadata from the Gmail API for ids it already knows about (e.g. on every scheduler
+        tick for an account with a large persistent unread backlog).
+        """
+        if not source_ids:
+            return {}
+        result: Dict[str, Dict[str, Any]] = {}
+        chunk_size = 500
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                for i in range(0, len(source_ids), chunk_size):
+                    chunk = source_ids[i:i + chunk_size]
+                    placeholders = ",".join("?" for _ in chunk)
+                    cursor.execute(
+                        f"""SELECT source_id, message_id, sender, subject, date_str, snippet
+                            FROM email_cache
+                            WHERE account = ? AND source_id IN ({placeholders})""",
+                        [account, *chunk],
+                    )
+                    for row in cursor.fetchall():
+                        result[row["source_id"]] = dict(row)
+        except Exception as e:
+            logger.error("Failed to fetch known source metadata for %s: %s", account, e)
+            return {}
+        return result
+
+    def get_triaged_message_ids(self, account: str) -> set:
+        """Retrieve the set of message_ids already triaged (triage_level set) for an account."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT message_id FROM email_cache WHERE account = ? AND triage_level IS NOT NULL", (account,)
+                )
+                return {row[0] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.error("Failed to fetch triaged message ids for %s: %s", account, e)
             return set()
 
     def get_email_counts(self, account: Optional[str] = None) -> Dict[str, int]:

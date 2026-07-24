@@ -73,7 +73,8 @@ class TestSyncAccount:
 
         client = MagicMock(spec=GmailClient)
         email = make_email("<a@test.com>")
-        client.fetch_unread_messages.return_value = [email]
+        client.list_unread_ids.return_value = [{"id": "internal-1"}]
+        client._fetch_metadata_batch.return_value = [email]
         client.fetch_full_bodies_batch.return_value = {"internal-1": "full body text"}
 
         settings = MagicMock()
@@ -99,7 +100,7 @@ class TestSyncAccount:
         db.get_cached_result.return_value = {"triage_level": 0, "email_body": "cached body"}
         engine = MagicMock(spec=EmailTriageEngine)
         client = MagicMock(spec=GmailClient)
-        client.fetch_unread_messages.return_value = []
+        client.list_unread_ids.return_value = []
 
         settings = MagicMock()
         settings.triage.confidence_threshold = 0.8
@@ -116,7 +117,8 @@ class TestSyncAccount:
         engine = MagicMock(spec=EmailTriageEngine)
         client = MagicMock(spec=GmailClient)
         email = make_email("<b@test.com>")
-        client.fetch_unread_messages.return_value = [email]
+        client.list_unread_ids.return_value = [{"id": "internal-1"}]
+        client._fetch_metadata_batch.return_value = [email]
 
         settings = MagicMock()
         settings.triage.confidence_threshold = 0.8
@@ -138,7 +140,8 @@ class TestSyncAccount:
 
         client = MagicMock(spec=GmailClient)
         emails = [make_email("<a@test.com>", eid="1"), make_email("<b@test.com>", eid="2"), make_email("<c@test.com>", eid="3")]
-        client.fetch_unread_messages.return_value = emails
+        client.list_unread_ids.return_value = [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+        client._fetch_metadata_batch.return_value = emails
         client.fetch_full_bodies_batch.return_value = {"1": "body1", "2": "body2", "3": "body3"}
 
         settings = MagicMock()
@@ -170,7 +173,8 @@ class TestSyncAccount:
             make_email("<has-body@test.com>", eid="1"),
             make_email("<needs-body@test.com>", eid="2"),
         ]
-        client.fetch_unread_messages.return_value = emails
+        client.list_unread_ids.return_value = [{"id": "1"}, {"id": "2"}]
+        client._fetch_metadata_batch.return_value = emails
         client.fetch_full_bodies_batch.return_value = {"2": "fetched body"}
 
         settings = MagicMock()
@@ -189,8 +193,72 @@ class TestSyncAccount:
             date_str="2026-01-01", snippet="snip", source_id="2", email_body="fetched body", is_unread=True,
         )
 
+    def test_reuses_cached_metadata_for_already_known_gmail_ids(self):
+        # An account with a large persistent backlog would otherwise re-fetch metadata for its
+        # entire live-unread set from the Gmail API on every scheduler tick; this is the fix --
+        # ids already known via get_known_source_metadata should skip _fetch_metadata_batch.
+        db = MagicMock(spec=EmailDB)
+        db.get_unread_message_ids.return_value = set()
+        db.get_cached_result.return_value = None
+        db.get_known_source_metadata.return_value = {
+            "1": {
+                "message_id": "<known@test.com>", "sender": "known@x.com", "subject": "Known Subj",
+                "date_str": "2026-01-01", "snippet": "known snip",
+            },
+        }
+        engine = MagicMock(spec=EmailTriageEngine)
+        engine.is_vip_sender.return_value = False
+        engine.run_level_0_static.return_value = (True, "noise")
+
+        client = MagicMock(spec=GmailClient)
+        new_email = make_email("<new@test.com>", eid="2")
+        client.list_unread_ids.return_value = [{"id": "1"}, {"id": "2"}]
+        client._fetch_metadata_batch.return_value = [new_email]
+        client.fetch_full_bodies_batch.return_value = {"1": "body1", "2": "body2"}
+
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+
+        summary = mcp_server.sync_account(db, engine, settings, client, "acct@test.com", None, 7)
+
+        db.get_known_source_metadata.assert_called_once_with("acct@test.com", ["1", "2"])
+        # Only the genuinely-new id ("2") should ever reach the Gmail metadata API.
+        client._fetch_metadata_batch.assert_called_once_with([{"id": "2"}])
+        assert summary["downloaded"] == 2
+        db.upsert_email_metadata.assert_any_call(
+            message_id="<known@test.com>", account="acct@test.com", sender="known@x.com", subject="Known Subj",
+            date_str="2026-01-01", snippet="known snip", source_id="1", email_body="body1", is_unread=True,
+        )
+
+    def test_untriaged_messages_prioritized_over_max_results_slice(self):
+        # With a max_results smaller than the live-unread set, already-triaged messages should be
+        # skipped in favor of untriaged ones, so a persistent backlog beyond max_results eventually
+        # gets processed instead of the same top-N slice being reselected forever.
+        db = MagicMock(spec=EmailDB)
+        db.get_unread_message_ids.return_value = set()
+        db.get_triaged_message_ids.return_value = {"<old@test.com>"}
+        db.get_cached_result.return_value = None
+        engine = MagicMock(spec=EmailTriageEngine)
+        engine.is_vip_sender.return_value = False
+        engine.run_level_0_static.return_value = (True, "noise")
+
+        client = MagicMock(spec=GmailClient)
+        emails = [make_email("<old@test.com>", eid="1"), make_email("<new@test.com>", eid="2")]
+        client.list_unread_ids.return_value = [{"id": "1"}, {"id": "2"}]
+        client._fetch_metadata_batch.return_value = emails
+        client.fetch_full_bodies_batch.return_value = {"2": "body2"}
+
+        settings = MagicMock()
+        settings.triage.confidence_threshold = 0.8
+
+        summary = mcp_server.sync_account(db, engine, settings, client, "acct@test.com", 1, 7)
+
+        client.fetch_full_bodies_batch.assert_called_once_with(["2"])
+        assert summary["downloaded"] == 1
+        assert summary["triaged"] == 1
+
     def test_stop_requested_during_listing_skips_batch_fetch(self):
-        # Stop isn't requested until after fetch_unread_messages returns (i.e. mid-run, not before
+        # Stop isn't requested until after list_unread_ids returns (i.e. mid-run, not before
         # sync_account even starts) -- exercises the download-phase stop check specifically,
         # distinct from the top-of-function early-return covered by TestStopEventSyncAccount.
         db = MagicMock(spec=EmailDB)
@@ -204,9 +272,10 @@ class TestSyncAccount:
 
         def fetch_unread_and_stop(*args, **kwargs):
             stop_event.set()
-            return [make_email("<a@test.com>", eid="1")]
+            return [{"id": "1"}]
 
-        client.fetch_unread_messages.side_effect = fetch_unread_and_stop
+        client.list_unread_ids.side_effect = fetch_unread_and_stop
+        client._fetch_metadata_batch.return_value = [make_email("<a@test.com>", eid="1")]
 
         settings = MagicMock()
         settings.triage.confidence_threshold = 0.8
@@ -225,7 +294,8 @@ class TestSyncAccount:
         engine.is_vip_sender.return_value = False
         engine.run_level_0_static.return_value = (True, "noise")
         client = MagicMock(spec=GmailClient)
-        client.fetch_unread_messages.return_value = [make_email("<c@test.com>")]
+        client.list_unread_ids.return_value = [{"id": "internal-1"}]
+        client._fetch_metadata_batch.return_value = [make_email("<c@test.com>")]
         client.fetch_full_bodies_batch.return_value = {"internal-1": "body"}
         settings = MagicMock()
         settings.triage.confidence_threshold = 0.8
@@ -239,7 +309,7 @@ class TestSyncAccount:
         db.get_unread_message_ids.side_effect = RuntimeError("boom")
         engine = MagicMock(spec=EmailTriageEngine)
         client = MagicMock(spec=GmailClient)
-        client.fetch_unread_messages.return_value = []
+        client.list_unread_ids.return_value = []
         settings = MagicMock()
 
         summary = mcp_server.sync_account(db, engine, settings, client, "error-acct@test.com", None, 7)
@@ -454,7 +524,7 @@ class TestStopEventSyncAccount:
         summary = mcp_server.sync_account(db, engine, settings, client, "acct@test.com", None, 7, stop_event=stop_event)
 
         assert summary["status"] == "stopped"
-        client.fetch_unread_messages.assert_not_called()
+        client.list_unread_ids.assert_not_called()
         db.save_sync_summary.assert_not_called()
 
     def test_stops_mid_loop(self):
@@ -466,7 +536,8 @@ class TestStopEventSyncAccount:
 
         client = MagicMock(spec=GmailClient)
         emails = [make_email("<a@test.com>", eid="1"), make_email("<b@test.com>", eid="2")]
-        client.fetch_unread_messages.return_value = emails
+        client.list_unread_ids.return_value = [{"id": "1"}, {"id": "2"}]
+        client._fetch_metadata_batch.return_value = emails
         # Bodies are batch-fetched upfront (before stop is requested); the stop only interrupts
         # the per-message persist/triage loop that follows.
         client.fetch_full_bodies_batch.return_value = {"1": "body", "2": "body"}

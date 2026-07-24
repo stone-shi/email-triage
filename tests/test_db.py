@@ -347,6 +347,33 @@ class TestEmailDBUnreadQueries:
         ids = db.get_unread_message_ids("acct@test.com")
         assert ids == {"<v1@test.com>"}
 
+    def test_get_known_source_metadata_returns_only_matching_source_ids(self, db):
+        db.upsert_email_metadata(
+            message_id="<w1@test.com>", account="acct@test.com", sender="s@x.com", subject="Subj",
+            date_str="2026-01-01", snippet="snip", source_id="src-1",
+        )
+        db.upsert_email_metadata(message_id="<w2@test.com>", account="other-acct@test.com", source_id="src-2")
+
+        known = db.get_known_source_metadata("acct@test.com", ["src-1", "src-2", "src-missing"])
+
+        assert set(known.keys()) == {"src-1"}
+        assert known["src-1"]["message_id"] == "<w1@test.com>"
+        assert known["src-1"]["sender"] == "s@x.com"
+
+    def test_get_known_source_metadata_empty_input(self, db):
+        assert db.get_known_source_metadata("acct@test.com", []) == {}
+
+    def test_get_triaged_message_ids(self, db):
+        db.save_triage_result(
+            message_id="<x1@test.com>", account="acct@test.com", sender="s", subject="s",
+            date_str="d", level_0_status="passed", triage_level=0,
+        )
+        db.upsert_email_metadata(message_id="<x2@test.com>", account="acct@test.com")
+
+        ids = db.get_triaged_message_ids("acct@test.com")
+
+        assert ids == {"<x1@test.com>"}
+
 
 class TestEmailDBEmailCounts:
     def test_counts_by_level_and_pending(self, db):

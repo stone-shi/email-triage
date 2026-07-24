@@ -370,6 +370,46 @@ def _run_tiered_triage(
         return {"triage_level": 2, "tag": l2_tag, "summary": summary}
 
 
+def _resolve_gmail_live_metadata(
+    db: EmailDB, client: "GmailClient", account_label: str, id_entries: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Resolves Gmail metadata (sender/subject/date/snippet/RFC Message-ID) for a bare list of
+    {id, threadId} entries returned by messages.list, reusing whatever metadata we already
+    cached for ids seen on a prior sync tick instead of re-fetching the entire live-unread set
+    from the Gmail API every tick. For an account with a large persistent backlog that set can
+    be in the thousands, and re-fetching it in full every scheduler interval is what trips
+    Gmail's per-user rate limit.
+    """
+    if not id_entries:
+        return []
+
+    all_ids = [str(e["id"]) for e in id_entries]
+    known = db.get_known_source_metadata(account_label, all_ids)
+
+    new_entries = [e for e in id_entries if str(e["id"]) not in known]
+    fetched = client._fetch_metadata_batch(new_entries) if new_entries else []
+    fetched_by_id = {str(f["id"]): f for f in fetched}
+
+    live: List[Dict[str, Any]] = []
+    for e in id_entries:
+        sid = str(e["id"])
+        if sid in known:
+            row = known[sid]
+            live.append({
+                "id": sid,
+                "message_id": row["message_id"],
+                "sender": row["sender"],
+                "subject": row["subject"],
+                "date": row["date_str"],
+                "snippet": row["snippet"],
+                "account": account_label,
+            })
+        elif sid in fetched_by_id:
+            live.append(fetched_by_id[sid])
+    return live
+
+
 def sync_account(
     db: EmailDB, engine: Any, settings_instance: Any, client: Any, account_label: str,
     max_results: Optional[int], days: Optional[int],
@@ -391,7 +431,8 @@ def sync_account(
         _set_progress(account_label, phase="listing", total=0, processed=0, current_subject=None)
         try:
             if isinstance(client, GmailClient):
-                live = client.fetch_unread_messages(max_results=None, days=days)
+                id_entries = client.list_unread_ids(max_results=None, days=days)
+                live = _resolve_gmail_live_metadata(db, client, account_label, id_entries)
             else:
                 live = client.fetch_unread_headers(max_results=None, days=days)
             live_ids = {e["message_id"] for e in live}
@@ -403,7 +444,15 @@ def sync_account(
                 db.upsert_email_metadata(message_id=mid, account=account_label, is_unread=False)
             summary["reconciled_read"] = len(newly_read)
 
-            to_process = live[:max_results] if max_results else live
+            if max_results:
+                # Prioritize messages not yet triaged so each tick makes forward progress through
+                # the backlog, instead of always re-selecting the same top-N slice of the live set
+                # (which would starve everything past position max_results forever).
+                triaged_ids = db.get_triaged_message_ids(account_label)
+                pending = [e for e in live if e["message_id"] not in triaged_ids]
+                to_process = pending[:max_results]
+            else:
+                to_process = live
 
             # Phase 1: figure out which messages already have a cached body vs need a fresh fetch.
             cached_by_id: Dict[str, Optional[Dict[str, Any]]] = {}

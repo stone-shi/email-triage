@@ -489,7 +489,7 @@ class EmailTriageEngine:
             for e in emails:
                 mid = e["message_id"]
                 internal_id = e["id"]
-                
+
                 if all_emails:
                     matching_ids.append(internal_id)
                 elif message_id and (mid == message_id or internal_id == message_id):
@@ -523,6 +523,26 @@ class EmailTriageEngine:
                     errors.append("Failed to execute IMAP flag command")
             except Exception as e:
                 errors.append(f"IMAP modify error: {e}")
+
+        # 5. Reflect successful remote marks in the local cache immediately, so
+        # fetch_and_process_unread (cache-only) doesn't show stale unread items
+        # until the next background sync tick reconciles them.
+        if gmail_marked:
+            id_to_message_id = {e["id"]: e["message_id"] for e in gmail_unread}
+            for internal_id in gmail_marked:
+                mid = id_to_message_id.get(internal_id)
+                if mid:
+                    self.db.upsert_email_metadata(
+                        message_id=mid, account=self.settings.gmail_account, is_unread=False
+                    )
+        if imap_marked:
+            id_to_message_id = {e["id"]: e["message_id"] for e in imap_unread}
+            for internal_id in imap_marked:
+                mid = id_to_message_id.get(internal_id)
+                if mid:
+                    self.db.upsert_email_metadata(
+                        message_id=mid, account=self.settings.imap_login, is_unread=False
+                    )
 
         return {
             "gmail_marked_count": len(gmail_marked),

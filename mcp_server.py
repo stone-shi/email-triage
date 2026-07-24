@@ -293,11 +293,13 @@ def _run_tiered_triage(
     by sync_account) rather than lazily fetched.
     """
     if engine.is_vip_sender(sender):
-        summary, _score, _l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
+        summary, _score, _l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
             level_0_status="passed", level_1_status="important", level_2_summary=summary,
-            triage_level=2, tag="vip", email_body=full_body, level_1_run=False, level_2_run=True
+            triage_level=2, tag="vip", email_body=full_body, level_1_run=False, level_2_run=True,
+            level_2_prompt_tokens=l2_metrics["prompt_tokens"],
+            level_2_completion_tokens=l2_metrics["completion_tokens"],
         )
         return {"triage_level": 2, "tag": "vip"}
 
@@ -318,16 +320,18 @@ def _run_tiered_triage(
         )
         return {"triage_level": 0, "tag": "low"}
     elif tei_lvl == 2:
-        summary, _score, l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
+        summary, _score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
             level_0_status="passed", level_1_status="tei_escalated", level_2_summary=summary,
             reason=tei_reason, score=tei_score, triage_level=2, tag=l2_tag,
-            email_body=full_body, level_1_run=False, level_2_run=True
+            email_body=full_body, level_1_run=False, level_2_run=True,
+            level_2_prompt_tokens=l2_metrics["prompt_tokens"],
+            level_2_completion_tokens=l2_metrics["completion_tokens"],
         )
         return {"triage_level": 2, "tag": l2_tag}
 
-    suggested_lvl, reason, score, l1_tag, _l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
+    suggested_lvl, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
 
     if score < settings_instance.triage.confidence_threshold:
         suggested_lvl, reason, score, l1_tag = engine.run_level_1_premium_escalation(sender, subject, snippet, full_body)
@@ -337,23 +341,31 @@ def _run_tiered_triage(
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
             level_0_status="passed", level_1_status="downgraded", reason=reason, score=score,
-            triage_level=0, tag=l1_tag, email_body=full_body, level_1_run=True, level_2_run=False
+            triage_level=0, tag=l1_tag, email_body=full_body, level_1_run=True, level_2_run=False,
+            level_1_prompt_tokens=l1_metrics["prompt_tokens"],
+            level_1_completion_tokens=l1_metrics["completion_tokens"],
         )
         return {"triage_level": 0, "tag": l1_tag}
     elif suggested_lvl == 1:
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
             level_0_status="passed", level_1_status="unimportant", reason=reason, score=score,
-            triage_level=1, tag=l1_tag, email_body=full_body, level_1_run=True, level_2_run=False
+            triage_level=1, tag=l1_tag, email_body=full_body, level_1_run=True, level_2_run=False,
+            level_1_prompt_tokens=l1_metrics["prompt_tokens"],
+            level_1_completion_tokens=l1_metrics["completion_tokens"],
         )
         return {"triage_level": 1, "tag": l1_tag}
     else:
-        summary, sum_score, l2_tag, _ = engine.run_level_2_summarization(subject, full_body)
+        summary, sum_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
             level_0_status="passed", level_1_status="important", level_2_summary=summary,
             reason=reason, score=sum_score, triage_level=2, tag=l2_tag,
-            email_body=full_body, level_1_run=True, level_2_run=True
+            email_body=full_body, level_1_run=True, level_2_run=True,
+            level_1_prompt_tokens=l1_metrics["prompt_tokens"],
+            level_1_completion_tokens=l1_metrics["completion_tokens"],
+            level_2_prompt_tokens=l2_metrics["prompt_tokens"],
+            level_2_completion_tokens=l2_metrics["completion_tokens"],
         )
         return {"triage_level": 2, "tag": l2_tag, "summary": summary}
 

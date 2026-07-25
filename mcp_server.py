@@ -674,6 +674,12 @@ def _profile_config(name: str) -> Dict[str, Any]:
         "scheduler_interval": s.scheduler.interval,
         "scheduler_max_per_account": s.scheduler.max_per_account,
         "scheduler_days": s.scheduler.days,
+        "auto_mark_read_level_0_enabled": s.auto_mark_read.level_0.enabled,
+        "auto_mark_read_level_0_after_displays": s.auto_mark_read.level_0.after_displays,
+        "auto_mark_read_level_1_enabled": s.auto_mark_read.level_1.enabled,
+        "auto_mark_read_level_1_after_displays": s.auto_mark_read.level_1.after_displays,
+        "auto_mark_read_level_2_enabled": s.auto_mark_read.level_2.enabled,
+        "auto_mark_read_level_2_after_displays": s.auto_mark_read.level_2.after_displays,
     }
 
 

@@ -50,6 +50,12 @@ def make_fake_settings(**overrides):
     s.scheduler.interval = "15m"
     s.scheduler.max_per_account = None
     s.scheduler.days = None
+    s.auto_mark_read.level_0.enabled = False
+    s.auto_mark_read.level_0.after_displays = 1
+    s.auto_mark_read.level_1.enabled = False
+    s.auto_mark_read.level_1.after_displays = 1
+    s.auto_mark_read.level_2.enabled = False
+    s.auto_mark_read.level_2.after_displays = 1
     for key, value in overrides.items():
         setattr(s, key, value)
     return s
@@ -1022,6 +1028,25 @@ class TestProfileConfigMasking:
         assert cfg["triage_model"] == "model-a"
         assert cfg["confidence_threshold"] == 0.8
         assert cfg["scheduler_interval"] == "15m"
+
+    def test_auto_mark_read_fields_shown_per_level(self, monkeypatch):
+        settings = make_fake_settings()
+        settings.auto_mark_read.level_0.enabled = True
+        settings.auto_mark_read.level_0.after_displays = 1
+        settings.auto_mark_read.level_1.enabled = False
+        settings.auto_mark_read.level_1.after_displays = 3
+        settings.auto_mark_read.level_2.enabled = False
+        settings.auto_mark_read.level_2.after_displays = 1
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (MagicMock(), MagicMock(), settings))
+
+        cfg = mcp_server._profile_config("default")
+
+        assert cfg["auto_mark_read_level_0_enabled"] is True
+        assert cfg["auto_mark_read_level_0_after_displays"] == 1
+        assert cfg["auto_mark_read_level_1_enabled"] is False
+        assert cfg["auto_mark_read_level_1_after_displays"] == 3
+        assert cfg["auto_mark_read_level_2_enabled"] is False
+        assert cfg["auto_mark_read_level_2_after_displays"] == 1
 
 
 class TestDashboardRoutes:

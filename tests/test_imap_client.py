@@ -28,6 +28,17 @@ def make_fake_message(uid, text=None, html=None):
     return msg
 
 
+def make_fake_header_message(uid, message_id=None, sender="s@x.com", subject="Subj", date="2026-01-01", desc=None):
+    msg = MagicMock()
+    msg.uid = uid
+    msg.headers = {"message-id": [message_id or f"<{uid}@test.com>"]}
+    msg.from_ = sender
+    msg.subject = subject
+    msg.date = date
+    msg.desc = desc
+    return msg
+
+
 def patch_mailbox(monkeypatch, fake_mailbox):
     fake_mailbox_cm = MagicMock()
     fake_mailbox_cm.__enter__.return_value = fake_mailbox
@@ -130,3 +141,58 @@ class TestFetchFullBodiesBatch:
         result2 = client2.fetch_full_bodies_batch(["1", "2"], chunk_size=1)
 
         assert result2 == {"2": "body two"}
+
+
+class TestFetchAllHeaders:
+    def test_fetches_all_messages_not_scoped_to_unread(self, monkeypatch):
+        client = make_client()
+        fake_mailbox = MagicMock()
+        fake_mailbox.fetch.return_value = [
+            make_fake_header_message("1", subject="First"),
+            make_fake_header_message("2", subject="Second"),
+        ]
+        patch_mailbox(monkeypatch, fake_mailbox)
+
+        result = client.fetch_all_headers()
+
+        assert [r["subject"] for r in result] == ["First", "Second"]
+        assert [r["id"] for r in result] == ["1", "2"]
+        _, kwargs = fake_mailbox.fetch.call_args
+        assert kwargs.get("headers_only") is True
+        assert kwargs.get("mark_seen") is False
+
+    def test_maps_message_shape_same_as_unread_headers(self, monkeypatch):
+        client = make_client()
+        fake_mailbox = MagicMock()
+        fake_mailbox.fetch.return_value = [
+            make_fake_header_message("42", message_id="<full@test.com>", sender="a@b.com", subject="Hi", date="2026-02-01"),
+        ]
+        patch_mailbox(monkeypatch, fake_mailbox)
+
+        result = client.fetch_all_headers()
+
+        assert result == [{
+            "id": "42", "message_id": "<full@test.com>", "sender": "a@b.com",
+            "subject": "Hi", "date": "2026-02-01", "snippet": "Subject: Hi", "account": "user@test.com",
+        }]
+
+    def test_respects_max_results_limit(self, monkeypatch):
+        client = make_client()
+        fake_mailbox = MagicMock()
+        fake_mailbox.fetch.return_value = [make_fake_header_message("1")]
+        patch_mailbox(monkeypatch, fake_mailbox)
+
+        client.fetch_all_headers(max_results=5)
+
+        _, kwargs = fake_mailbox.fetch.call_args
+        assert kwargs.get("limit") == 5
+
+    def test_connection_failure_returns_empty_list(self, monkeypatch):
+        client = make_client()
+        mailbox_ctor = MagicMock()
+        mailbox_ctor.return_value.login.side_effect = RuntimeError("connection refused")
+        monkeypatch.setattr(imap_client, "MailBox", mailbox_ctor)
+
+        result = client.fetch_all_headers()
+
+        assert result == []

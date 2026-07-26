@@ -327,6 +327,25 @@ class EmailDB:
             return {}
         return result
 
+    def get_archived_source_ids(self, account: str) -> set:
+        """
+        Retrieve the set of source_ids that already have a downloaded body cached for an account
+        -- used by the full-mailbox archive downloader to skip messages (both metadata and body
+        fetch) it has already archived on a prior run, making it cheap to resume or re-trigger.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """SELECT source_id FROM email_cache
+                       WHERE account = ? AND source_id IS NOT NULL AND email_body IS NOT NULL""",
+                    (account,),
+                )
+                return {row[0] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.error("Failed to fetch archived source ids for %s: %s", account, e)
+            return set()
+
     def get_triaged_message_ids(self, account: str) -> set:
         """Retrieve the set of message_ids already triaged (triage_level set) for an account."""
         try:

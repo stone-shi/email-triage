@@ -451,6 +451,175 @@ class TestSyncAccountAutoMarkRead:
         db.get_auto_mark_read_candidates.assert_not_called()
 
 
+class TestFullDownloadAccount:
+    def test_gmail_downloads_new_messages_without_triage(self):
+        db = MagicMock(spec=EmailDB)
+        db.get_archived_source_ids.return_value = set()
+        db.get_known_source_metadata.return_value = {}
+        client = MagicMock(spec=GmailClient)
+        client.list_all_ids.return_value = [{"id": "1"}, {"id": "2"}]
+        client._fetch_metadata_batch.return_value = [
+            make_email("<a@test.com>", eid="1"), make_email("<b@test.com>", eid="2"),
+        ]
+        client.fetch_full_bodies_batch.return_value = {"1": "body1", "2": "body2"}
+
+        summary = mcp_server.full_download_account(db, client, "acct@test.com")
+
+        assert summary["total_on_server"] == 2
+        assert summary["skipped_cached"] == 0
+        assert summary["downloaded"] == 2
+        assert summary["errors"] == []
+        db.upsert_email_metadata.assert_any_call(
+            message_id="<a@test.com>", account="acct@test.com", sender="s@x.com", subject="Subj",
+            date_str="2026-01-01", snippet="snip", source_id="1", email_body="body1",
+        )
+        db.save_sync_summary.assert_called_once()
+        assert db.save_sync_summary.call_args[0][0] == "acct@test.com::full_archive"
+
+    def test_gmail_skips_already_archived_messages(self):
+        db = MagicMock(spec=EmailDB)
+        db.get_archived_source_ids.return_value = {"1"}
+        db.get_known_source_metadata.return_value = {}
+        client = MagicMock(spec=GmailClient)
+        client.list_all_ids.return_value = [{"id": "1"}, {"id": "2"}]
+        client._fetch_metadata_batch.return_value = [make_email("<b@test.com>", eid="2")]
+        client.fetch_full_bodies_batch.return_value = {"2": "body2"}
+
+        summary = mcp_server.full_download_account(db, client, "acct@test.com")
+
+        assert summary["total_on_server"] == 2
+        assert summary["skipped_cached"] == 1
+        assert summary["downloaded"] == 1
+        client._fetch_metadata_batch.assert_called_once_with([{"id": "2"}])
+        client.fetch_full_bodies_batch.assert_called_once_with(["2"])
+
+    def test_imap_downloads_new_messages(self):
+        db = MagicMock(spec=EmailDB)
+        db.get_archived_source_ids.return_value = set()
+        client = MagicMock(spec=IMAPClient)
+        client.fetch_all_headers.return_value = [make_email("<c@test.com>", eid="1")]
+        client.fetch_full_bodies_batch.return_value = {"1": "body1"}
+
+        summary = mcp_server.full_download_account(db, client, "imap@test.com")
+
+        assert summary["total_on_server"] == 1
+        assert summary["downloaded"] == 1
+        db.upsert_email_metadata.assert_any_call(
+            message_id="<c@test.com>", account="imap@test.com", sender="s@x.com", subject="Subj",
+            date_str="2026-01-01", snippet="snip", source_id="1", email_body="body1",
+        )
+
+    def test_already_stopped_returns_immediately(self):
+        db = MagicMock(spec=EmailDB)
+        client = MagicMock(spec=GmailClient)
+        stop_event = threading.Event()
+        stop_event.set()
+
+        summary = mcp_server.full_download_account(db, client, "acct@test.com", stop_event=stop_event)
+
+        assert summary["status"] == "stopped"
+        client.list_all_ids.assert_not_called()
+
+    def test_stop_event_interrupts_between_chunks(self):
+        db = MagicMock(spec=EmailDB)
+        db.get_archived_source_ids.return_value = set()
+        db.get_known_source_metadata.return_value = {}
+        client = MagicMock(spec=GmailClient)
+        id_entries = [{"id": str(i)} for i in range(250)]
+        client.list_all_ids.return_value = id_entries
+        client._fetch_metadata_batch.return_value = [make_email(f"<m{i}@test.com>", eid=str(i)) for i in range(250)]
+        stop_event = threading.Event()
+
+        def fake_fetch_bodies(source_ids):
+            stop_event.set()  # simulate a stop request arriving during the first chunk
+            return {sid: "body" for sid in source_ids}
+
+        client.fetch_full_bodies_batch.side_effect = fake_fetch_bodies
+
+        summary = mcp_server.full_download_account(db, client, "acct@test.com", stop_event=stop_event)
+
+        assert summary["status"] == "stopped"
+        assert summary["downloaded"] == 200
+        client.fetch_full_bodies_batch.assert_called_once()
+
+
+class TestFullDownloadProfile:
+    def test_merges_gmail_and_imap_results(self, monkeypatch):
+        fake_db = MagicMock(spec=EmailDB)
+        fake_settings = MagicMock()
+        fake_settings.gmail_account = "gmail@test.com"
+        fake_settings.imap_login = "imap@test.com"
+
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (fake_db, MagicMock(), fake_settings))
+        monkeypatch.setattr(mcp_server, "GmailClient", lambda settings_instance: MagicMock(spec=GmailClient))
+        monkeypatch.setattr(mcp_server, "IMAPClient", lambda settings_instance: MagicMock(spec=IMAPClient))
+
+        calls = []
+
+        def fake_full_download_account(db, client, account_label, stop_event=None):
+            calls.append(account_label)
+            return {"account": account_label}
+
+        monkeypatch.setattr(mcp_server, "full_download_account", fake_full_download_account)
+
+        result = mcp_server.full_download_profile("merge-test-profile")
+
+        assert result["status"] == "ok"
+        assert result["gmail"] == {"account": "gmail@test.com"}
+        assert result["imap"] == {"account": "imap@test.com"}
+        assert set(calls) == {"gmail@test.com", "imap@test.com"}
+
+    def test_skips_placeholder_sides(self, monkeypatch):
+        fake_db = MagicMock(spec=EmailDB)
+        fake_settings = MagicMock()
+        fake_settings.gmail_account = mcp_server._PLACEHOLDER_GMAIL_ACCOUNT
+        fake_settings.imap_login = mcp_server._PLACEHOLDER_IMAP_LOGIN
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (fake_db, MagicMock(), fake_settings))
+        gmail_ctor = MagicMock(side_effect=AssertionError("GmailClient should not be constructed"))
+        imap_ctor = MagicMock(side_effect=AssertionError("IMAPClient should not be constructed"))
+        monkeypatch.setattr(mcp_server, "GmailClient", gmail_ctor)
+        monkeypatch.setattr(mcp_server, "IMAPClient", imap_ctor)
+
+        result = mcp_server.full_download_profile("download-all-default-test")
+
+        gmail_ctor.assert_not_called()
+        imap_ctor.assert_not_called()
+        assert result["gmail"] == {"status": "skipped", "reason": "gmail_account not configured"}
+        assert result["imap"] == {"status": "skipped", "reason": "imap_login not configured"}
+
+    def test_shares_lock_with_regular_sync(self):
+        # A profile's regular-sync lock being held should also block a full download, since both
+        # mutate the same DB/API resources for that profile.
+        lock = mcp_server._get_profile_lock("shared-lock-profile")
+        lock.acquire()
+        try:
+            result = mcp_server.full_download_profile("shared-lock-profile")
+            assert result == {"profile": "shared-lock-profile", "status": "skipped", "reason": "sync already in progress"}
+        finally:
+            lock.release()
+
+
+class TestStartFullDownload:
+    def test_starts_background_thread_for_single_profile(self, monkeypatch):
+        started = threading.Event()
+        monkeypatch.setattr(mcp_server, "full_download_profile", lambda profile: started.set())
+
+        result = mcp_server._start_full_download("start-full-download-test")
+
+        assert result == {"status": "started", "profile": "start-full-download-test"}
+        assert started.wait(timeout=2)
+
+    def test_all_triggers_full_download_all_profiles(self, monkeypatch):
+        started = threading.Event()
+        monkeypatch.setattr(mcp_server, "full_download_all_profiles", lambda: started.set())
+        monkeypatch.setattr(mcp_server, "full_download_profile", MagicMock(side_effect=AssertionError("should not be called")))
+
+        result = mcp_server._start_full_download("all")
+
+        assert result == {"status": "started", "profile": "all"}
+        assert started.wait(timeout=2)
+
+
 class TestSyncProgressHelpers:
     def test_set_get_clear_roundtrip(self):
         account = "progress-helper-acct@test.com"
@@ -1104,6 +1273,24 @@ class TestDashboardRoutes:
         assert response.status_code == 200
         assert response.json() == {"status": "stop_requested", "profile": "default"}
         assert mcp_server._get_stop_event("default").is_set() is True
+
+    def test_download_all_start_route(self, client, monkeypatch):
+        started = threading.Event()
+        monkeypatch.setattr(mcp_server, "full_download_profile", lambda profile: started.set())
+
+        response = client.post("/api/download_all/start?profile=default")
+        assert response.status_code == 200
+        assert response.json() == {"status": "started", "profile": "default"}
+        assert started.wait(timeout=2)
+
+    def test_api_status_includes_full_download_fields(self, client):
+        response = client.get("/api/status")
+        data = response.json()
+        profile_data = data["profiles"]["default"]
+        assert "full_download_summary" in profile_data["gmail"]
+        assert "full_download_progress" in profile_data["gmail"]
+        assert "full_download_summary" in profile_data["imap"]
+        assert "full_download_progress" in profile_data["imap"]
         mcp_server._get_stop_event("default").clear()
 
     def test_api_logs_returns_buffered_lines(self, client):

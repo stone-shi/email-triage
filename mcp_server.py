@@ -601,6 +601,159 @@ def sync_all_profiles() -> Dict[str, Any]:
     return {"profiles": {name: sync_profile(name) for name in list_profile_names()}}
 
 
+# =====================================================================
+# FULL MAILBOX ARCHIVE DOWNLOADER (manual, one-time/resumable: every message, no triage)
+# =====================================================================
+#
+# Step 1 of a planned local full-archive + embedding search feature: download every message in
+# the mailbox (not just unread) and cache its body, WITHOUT running it through the triage
+# pipeline -- triage_level stays NULL, exactly like a downloaded-but-not-yet-triaged row from the
+# regular sync engine. Shares the regular sync's per-profile lock/stop-event so the two can never
+# run concurrently against the same profile's DB, and the existing Stop button also cancels this.
+
+_full_download_progress: Dict[str, Dict[str, Any]] = {}
+_full_download_progress_guard = threading.Lock()
+
+
+def _set_full_download_progress(account_label: str, **fields: Any) -> None:
+    with _full_download_progress_guard:
+        _full_download_progress.setdefault(account_label, {}).update(fields)
+
+
+def _clear_full_download_progress(account_label: str) -> None:
+    with _full_download_progress_guard:
+        _full_download_progress.pop(account_label, None)
+
+
+def _get_full_download_progress(account_label: str) -> Optional[Dict[str, Any]]:
+    with _full_download_progress_guard:
+        entry = _full_download_progress.get(account_label)
+        return dict(entry) if entry is not None else None
+
+
+def _full_download_summary_key(account_label: str) -> str:
+    """A distinct sync_state key so the archive summary doesn't clobber the regular sync's
+    last-download summary -- both are stored in the same generic (account -> JSON) table."""
+    return f"{account_label}::full_archive"
+
+
+def full_download_account(db: EmailDB, client: Any, account_label: str, stop_event: Optional[threading.Event] = None) -> Dict[str, Any]:
+    """
+    One-time (resumable) full-mailbox download: lists EVERY message on the server -- not scoped
+    to unread -- and persists metadata + body via upsert_email_metadata. Never calls the triage
+    pipeline, so triage_level stays NULL for anything not already triaged by the regular unread
+    sync. Messages that already have a cached body are skipped entirely (no metadata or body
+    re-fetch), so re-running this (or resuming after a stop) is cheap.
+    """
+    summary: Dict[str, Any] = {
+        "account": account_label, "total_on_server": 0, "downloaded": 0, "skipped_cached": 0, "errors": [],
+    }
+    if stop_event and stop_event.is_set():
+        summary["status"] = "stopped"
+        return summary
+
+    try:
+        _set_full_download_progress(account_label, phase="listing_all", total=0, processed=0)
+        if isinstance(client, GmailClient):
+            id_entries = client.list_all_ids()
+            archived = db.get_archived_source_ids(account_label)
+            summary["total_on_server"] = len(id_entries)
+            pending_entries = [e for e in id_entries if str(e["id"]) not in archived]
+            summary["skipped_cached"] = len(id_entries) - len(pending_entries)
+            live = _resolve_gmail_live_metadata(db, client, account_label, pending_entries)
+        else:
+            all_headers = client.fetch_all_headers()
+            archived = db.get_archived_source_ids(account_label)
+            summary["total_on_server"] = len(all_headers)
+            live = [e for e in all_headers if str(e["id"]) not in archived]
+            summary["skipped_cached"] = len(all_headers) - len(live)
+
+        _set_full_download_progress(account_label, phase="downloading", total=len(live), processed=0)
+
+        chunk_size = 200
+        for i in range(0, len(live), chunk_size):
+            if stop_event and stop_event.is_set():
+                summary["status"] = "stopped"
+                break
+            chunk = live[i:i + chunk_size]
+            source_ids = [str(e["id"]) for e in chunk]
+            bodies = client.fetch_full_bodies_batch(source_ids)
+            for e in chunk:
+                sid = str(e["id"])
+                db.upsert_email_metadata(
+                    message_id=e["message_id"], account=account_label, sender=e.get("sender"),
+                    subject=e.get("subject"), date_str=e.get("date"), snippet=e.get("snippet"),
+                    source_id=sid, email_body=bodies.get(sid, ""),
+                )
+                summary["downloaded"] += 1
+            _set_full_download_progress(account_label, processed=min(i + chunk_size, len(live)))
+    except Exception as ex:
+        logger.error("full_download_account failed for %s: %s", account_label, ex, exc_info=True)
+        summary["errors"].append(str(ex))
+    finally:
+        _clear_full_download_progress(account_label)
+
+    from datetime import datetime, timezone
+    summary["last_full_download_at"] = datetime.now(timezone.utc).isoformat()
+    db.save_sync_summary(_full_download_summary_key(account_label), summary)
+    return summary
+
+
+def full_download_profile(profile: str) -> Dict[str, Any]:
+    """Runs full_download_account for both Gmail and IMAP under one profile, guarded by the same
+    per-profile lock/stop-event as sync_profile."""
+    lock = _get_profile_lock(profile)
+    if not lock.acquire(blocking=False):
+        return {"profile": profile, "status": "skipped", "reason": "sync already in progress"}
+    stop_event = _get_stop_event(profile)
+    try:
+        db, _, profile_settings = get_resources(profile)
+        result: Dict[str, Any] = {"profile": profile, "status": "ok"}
+
+        if not stop_event.is_set():
+            if profile_settings.gmail_account == _PLACEHOLDER_GMAIL_ACCOUNT:
+                result["gmail"] = {"status": "skipped", "reason": "gmail_account not configured"}
+            else:
+                try:
+                    gmail = GmailClient(settings_instance=profile_settings)
+                    result["gmail"] = full_download_account(db, gmail, profile_settings.gmail_account, stop_event=stop_event)
+                except Exception as e:
+                    logger.error("Gmail full download failed for profile %s: %s", profile, e, exc_info=True)
+                    result["gmail"] = {"errors": [str(e)]}
+
+        if not stop_event.is_set():
+            if profile_settings.imap_login == _PLACEHOLDER_IMAP_LOGIN:
+                result["imap"] = {"status": "skipped", "reason": "imap_login not configured"}
+            else:
+                try:
+                    imap = IMAPClient(settings_instance=profile_settings)
+                    result["imap"] = full_download_account(db, imap, profile_settings.imap_login, stop_event=stop_event)
+                except Exception as e:
+                    logger.error("IMAP full download failed for profile %s: %s", profile, e, exc_info=True)
+                    result["imap"] = {"errors": [str(e)]}
+
+        if stop_event.is_set():
+            result["status"] = "stopped"
+        return result
+    finally:
+        stop_event.clear()
+        lock.release()
+
+
+def full_download_all_profiles() -> Dict[str, Any]:
+    """Runs full_download_profile for every configured profile under profiles/."""
+    return {"profiles": {name: full_download_profile(name) for name in list_profile_names()}}
+
+
+def _start_full_download(profile: str) -> Dict[str, Any]:
+    """Kicks off a full-mailbox download in a background thread and returns immediately."""
+    if profile.strip().lower() == "all":
+        threading.Thread(target=full_download_all_profiles, daemon=True).start()
+    else:
+        threading.Thread(target=lambda: full_download_profile(profile), daemon=True).start()
+    return {"status": "started", "profile": profile}
+
+
 def _is_configured(profile_settings: Any) -> bool:
     """True unless a profile's Gmail/IMAP identity is still at the uninitialized placeholder default."""
     return (
@@ -622,12 +775,16 @@ def _profile_status(name: str) -> Dict[str, Any]:
             "summary": db.get_sync_summary(profile_settings.gmail_account),
             "counts": db.get_email_counts(profile_settings.gmail_account),
             "progress": _get_progress(profile_settings.gmail_account),
+            "full_download_summary": db.get_sync_summary(_full_download_summary_key(profile_settings.gmail_account)),
+            "full_download_progress": _get_full_download_progress(profile_settings.gmail_account),
         },
         "imap": {
             "account": profile_settings.imap_login,
             "summary": db.get_sync_summary(profile_settings.imap_login),
             "counts": db.get_email_counts(profile_settings.imap_login),
             "progress": _get_progress(profile_settings.imap_login),
+            "full_download_summary": db.get_sync_summary(_full_download_summary_key(profile_settings.imap_login)),
+            "full_download_progress": _get_full_download_progress(profile_settings.imap_login),
         },
     }
 
@@ -1075,6 +1232,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
   .cfg-key { color: #57606a; }
   .cfg-val { word-break: break-word; }
   .counts { color: #57606a; }
+  .archive { margin-top: 6px; font-size: 12px; color: #57606a; }
   .progress-wrap { margin-top: 6px; }
   .progress-bar { background: #e5e7eb; border-radius: 999px; height: 6px; overflow: hidden; }
   .progress-fill { background: #2563eb; height: 100%; }
@@ -1147,7 +1305,9 @@ function renderProgress(progress) {
   const pct = total ? Math.round((processed / total) * 100) : 0;
   const label = progress.phase === 'listing'
     ? 'listing unread mail&hellip;'
-    : processed + ' / ' + total + (progress.current_subject ? ' &mdash; ' + progress.current_subject : '');
+    : progress.phase === 'listing_all'
+      ? 'listing full mailbox&hellip;'
+      : processed + ' / ' + total + (progress.current_subject ? ' &mdash; ' + progress.current_subject : '');
   return '<div class="progress-wrap">'
     + '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div>'
     + '<div class="progress-label">' + label + '</div>'
@@ -1158,8 +1318,9 @@ function renderAccount(acct) {
   const s = acct.summary;
   const counts = renderCounts(acct.counts);
   const progress = renderProgress(acct.progress);
+  const archive = renderFullDownload(acct);
   if (!s) {
-    return '<div class="account"><div class="label">' + acct.account + '</div>' + counts + '<div>never synced</div>' + progress + '</div>';
+    return '<div class="account"><div class="label">' + acct.account + '</div>' + counts + '<div>never synced</div>' + progress + archive + '</div>';
   }
   const errors = (s.errors && s.errors.length) ? '<div class="errors">' + s.errors.join('; ') + '</div>' : '';
   const status = s.status ? ' (' + s.status + ')' : '';
@@ -1170,7 +1331,23 @@ function renderAccount(acct) {
     + '<div>downloaded: ' + (s.downloaded ?? 0) + ' &middot; reconciled: ' + (s.reconciled_read ?? 0) + ' &middot; triaged: ' + (s.triaged ?? 0) + '</div>'
     + errors
     + progress
+    + archive
     + '</div>';
+}
+
+function renderFullDownload(acct) {
+  const s = acct.full_download_summary;
+  const progress = renderProgress(acct.full_download_progress);
+  if (!s && !progress) return '';
+  const errors = (s && s.errors && s.errors.length) ? '<div class="errors">' + s.errors.join('; ') + '</div>' : '';
+  const line = s
+    ? 'full archive: last run ' + (s.last_full_download_at || 'n/a')
+      + ' &middot; found ' + (s.total_on_server ?? 0)
+      + ' &middot; downloaded ' + (s.downloaded ?? 0)
+      + ' &middot; already cached ' + (s.skipped_cached ?? 0)
+      + (s.status === 'stopped' ? ' (stopped)' : '')
+    : 'full archive: in progress&hellip;';
+  return '<div class="archive"><div>' + line + '</div>' + errors + progress + '</div>';
 }
 
 function renderConfig(cfg) {
@@ -1235,6 +1412,7 @@ function renderProfileCard(name, p) {
     + renderAccount(p.imap)
     + '<div style="margin-top:12px">'
     + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startSync(\\'' + name + '\\')">Sync Now</button>'
+    + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startFullDownload(\\'' + name + '\\')">Download All</button>'
     + '<button class="stop" ' + (p.running ? '' : 'disabled') + ' onclick="stopSync(\\'' + name + '\\')">Stop</button>'
     + '</div>'
     + renderTokenStats(p.token_stats)
@@ -1255,6 +1433,11 @@ async function startSync(profile) {
 
 async function stopSync(profile) {
   await fetch('/api/sync/stop?profile=' + encodeURIComponent(profile), { method: 'POST' });
+  loadStatus();
+}
+
+async function startFullDownload(profile) {
+  await fetch('/api/download_all/start?profile=' + encodeURIComponent(profile), { method: 'POST' });
   loadStatus();
 }
 
@@ -1317,6 +1500,12 @@ async def api_sync_start(request: Request) -> JSONResponse:
 async def api_sync_stop(request: Request) -> JSONResponse:
     profile = request.query_params.get("profile", "all")
     return JSONResponse(_stop_sync(profile))
+
+
+@mcp.custom_route("/api/download_all/start", methods=["POST"])
+async def api_download_all_start(request: Request) -> JSONResponse:
+    profile = request.query_params.get("profile", "all")
+    return JSONResponse(_start_full_download(profile))
 
 
 @mcp.custom_route("/api/logs", methods=["GET"])

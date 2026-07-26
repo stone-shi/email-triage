@@ -136,6 +136,56 @@ class TestListUnreadIds:
 
         assert len(result) == 3
 
+    def test_includes_query_param(self):
+        service = MagicMock()
+        list_mock = service.users.return_value.messages.return_value.list
+        list_mock.return_value.execute.return_value = {"messages": []}
+        client = make_client(service)
+
+        client.list_unread_ids()
+
+        _, kwargs = list_mock.call_args
+        assert kwargs.get("q") == "is:unread"
+
+
+class TestListAllIds:
+    def test_omits_query_param_for_all_mail(self):
+        service = MagicMock()
+        list_mock = service.users.return_value.messages.return_value.list
+        list_mock.return_value.execute.return_value = {"messages": [{"id": "1"}, {"id": "2"}]}
+        client = make_client(service)
+
+        result = client.list_all_ids()
+
+        assert result == [{"id": "1"}, {"id": "2"}]
+        _, kwargs = list_mock.call_args
+        assert "q" not in kwargs
+
+    def test_follows_next_page_token(self):
+        service = MagicMock()
+        list_mock = service.users.return_value.messages.return_value.list
+        page1 = {"messages": [{"id": "1"}], "nextPageToken": "tok"}
+        page2 = {"messages": [{"id": "2"}]}
+        list_mock.return_value.execute.side_effect = [page1, page2]
+        client = make_client(service)
+
+        result = client.list_all_ids()
+
+        assert result == [{"id": "1"}, {"id": "2"}]
+        assert list_mock.call_count == 2
+
+    def test_respects_max_results_across_pages(self):
+        service = MagicMock()
+        list_mock = service.users.return_value.messages.return_value.list
+        page1 = {"messages": [{"id": "1"}, {"id": "2"}], "nextPageToken": "tok"}
+        page2 = {"messages": [{"id": "3"}, {"id": "4"}]}
+        list_mock.return_value.execute.side_effect = [page1, page2]
+        client = make_client(service)
+
+        result = client.list_all_ids(max_results=3)
+
+        assert len(result) == 3
+
 
 class TestFetchMetadataBatchRetry:
     def test_retries_on_429_then_succeeds(self, monkeypatch):

@@ -66,6 +66,42 @@ class IMAPClient:
             logger.error("Failed to fetch unread emails from IMAP: %s", e, exc_info=True)
             return []
 
+    def fetch_all_headers(self, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Connects to IMAP server and fetches headers for EVERY message in the mailbox (not scoped
+        to unread), for a one-time full-archive download. Scoped to the default/selected folder
+        (INBOX), same as fetch_unread_headers -- no multi-folder support yet.
+        """
+        results: List[Dict[str, Any]] = []
+        try:
+            logger.info("Connecting to IMAP server %s:%d for full mailbox listing...", self.host, self.port)
+            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+                logger.info("Successfully logged into IMAP account. Scanning ALL messages...")
+                messages = mailbox.fetch(AND(all=True), headers_only=True, mark_seen=False, limit=max_results)
+
+                for msg in messages:
+                    message_id = msg.headers.get('message-id', [f"imap_{msg.uid}"])[0]
+                    from_str = msg.from_
+                    subject_str = msg.subject
+                    date_str = str(msg.date)
+                    snippet_str = msg.desc if hasattr(msg, 'desc') and msg.desc else f"Subject: {subject_str}"
+
+                    results.append({
+                        'id': msg.uid,
+                        'message_id': message_id,
+                        'sender': from_str,
+                        'subject': subject_str,
+                        'date': date_str,
+                        'snippet': snippet_str,
+                        'account': self.login_user
+                    })
+
+            logger.info("Fetched %d total messages from IMAP server.", len(results))
+            return results
+        except Exception as e:
+            logger.error("Failed to fetch all messages from IMAP: %s", e, exc_info=True)
+            return []
+
     def fetch_full_body(self, uid: str) -> str:
         """Fetch full body if email passes triage."""
         try:

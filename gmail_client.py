@@ -231,31 +231,25 @@ class GmailClient:
 
         return results
 
-    def list_unread_ids(
-        self,
-        query: str = "is:unread",
-        max_results: Optional[int] = None,
-        days: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    def _list_message_ids(self, query: str, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        Lists bare {id, threadId} entries for messages matching the query via `messages.list`
-        pagination only -- no per-message metadata fetch. Cheap relative to metadata/full-body
-        fetches, so callers that already know some of these ids (e.g. from a prior sync tick)
-        can skip metadata fetching for them instead of always resolving the whole result set.
+        Shared `messages.list` pagination helper -- bare {id, threadId} entries only, no
+        per-message metadata fetch. Omits the `q` param entirely when `query` is empty, which
+        (with no labelIds filter either) matches Gmail's own "All Mail" default scope: every
+        message except Spam and Trash.
         """
         if not self.service:
             logger.error("Gmail service client is not initialized.")
             return []
 
         try:
-            if days is not None and days > 0:
-                query = f"{query} newer_than:{days}d"
-
-            logger.info("Listing Gmail messages with query: '%s'", query)
+            logger.info("Listing Gmail messages with query: '%s'", query or "(none -- all mail)")
             messages: List[Dict[str, Any]] = []
             page_token = None
             while True:
-                list_params = {'userId': 'me', 'q': query}
+                list_params = {'userId': 'me'}
+                if query:
+                    list_params['q'] = query
                 if page_token:
                     list_params['pageToken'] = page_token
                 if max_results is not None:
@@ -275,6 +269,29 @@ class GmailClient:
         except Exception as e:
             logger.error("Failed to list Gmail messages: %s", e, exc_info=True)
             return []
+
+    def list_unread_ids(
+        self,
+        query: str = "is:unread",
+        max_results: Optional[int] = None,
+        days: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Lists bare {id, threadId} entries for messages matching the query via `messages.list`
+        pagination only -- no per-message metadata fetch. Cheap relative to metadata/full-body
+        fetches, so callers that already know some of these ids (e.g. from a prior sync tick)
+        can skip metadata fetching for them instead of always resolving the whole result set.
+        """
+        if days is not None and days > 0:
+            query = f"{query} newer_than:{days}d"
+        return self._list_message_ids(query, max_results)
+
+    def list_all_ids(self, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Lists bare {id, threadId} entries for EVERY message in the mailbox, for a one-time
+        full-archive download -- unlike list_unread_ids, this is not scoped to unread.
+        """
+        return self._list_message_ids("", max_results)
 
     def fetch_unread_messages(
         self,

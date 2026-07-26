@@ -374,6 +374,24 @@ class TestEmailDBUnreadQueries:
 
         assert ids == {"<x1@test.com>"}
 
+    def test_get_archived_source_ids_requires_body(self, db):
+        db.upsert_email_metadata(
+            message_id="<y1@test.com>", account="acct@test.com", source_id="src-1", email_body="full text",
+        )
+        # Downloaded metadata but no body yet -- not archived.
+        db.upsert_email_metadata(message_id="<y2@test.com>", account="acct@test.com", source_id="src-2")
+        # Different account entirely.
+        db.upsert_email_metadata(
+            message_id="<y3@test.com>", account="other-acct@test.com", source_id="src-3", email_body="text",
+        )
+
+        ids = db.get_archived_source_ids("acct@test.com")
+
+        assert ids == {"src-1"}
+
+    def test_get_archived_source_ids_empty_when_nothing_downloaded(self, db):
+        assert db.get_archived_source_ids("acct@test.com") == set()
+
 
 class TestEmailDBDisplayCountAndAutoMarkRead:
     def test_increment_display_count_starts_from_zero(self, db):

@@ -240,6 +240,94 @@ class TestFetchMetadataBatchRetry:
         assert {r["id"] for r in result} == {"m1", "m2"}
 
 
+class TestBatchCallThrottling:
+    """
+    Covers the fix for hitting Gmail's per-user-per-minute quota during a full-mailbox download:
+    _throttle_batch_call must pace successive HTTP batch calls, including across separate
+    top-level calls to _fetch_metadata_batch/fetch_full_bodies_batch on the same client (the
+    "seam" a caller like the full-mailbox downloader hits when it chunks work across multiple
+    invocations) -- not just between chunks within a single one of those calls.
+    """
+
+    def _make_metadata_client(self, monkeypatch, sleep_calls, clock_value, num_ids):
+        monkeypatch.setattr(gmail_client.time, "sleep", lambda s: sleep_calls.append(s))
+        monkeypatch.setattr(gmail_client.time, "monotonic", lambda: clock_value)
+        service = MagicMock()
+        outcomes = {
+            str(i): [{"id": str(i), "payload": {"headers": []}, "snippet": "x"}] for i in range(num_ids)
+        }
+        service.new_batch_http_request.side_effect = lambda callback: FakeBatch(callback, outcomes)
+        return make_client(service), outcomes
+
+    def test_no_sleep_before_the_very_first_batch_call(self, monkeypatch):
+        sleep_calls = []
+        client, _ = self._make_metadata_client(monkeypatch, sleep_calls, 1000.0, 1)
+
+        client._fetch_metadata_batch([{"id": "0"}])
+
+        assert sleep_calls == []
+
+    def test_paces_between_chunks_within_one_call(self, monkeypatch):
+        sleep_calls = []
+        client, _ = self._make_metadata_client(monkeypatch, sleep_calls, 1000.0, 150)
+
+        client._fetch_metadata_batch([{"id": str(i)} for i in range(150)])
+
+        assert sleep_calls == [pytest.approx(gmail_client._INTER_BATCH_DELAY_SECONDS)]
+
+    def test_paces_across_separate_top_level_calls_on_same_client(self, monkeypatch):
+        # This is the seam the full-mailbox downloader hits: two separate top-level calls to
+        # _fetch_metadata_batch (or fetch_full_bodies_batch) on the same GmailClient instance,
+        # each with only a single chunk, must still be paced against each other.
+        sleep_calls = []
+        client, _ = self._make_metadata_client(monkeypatch, sleep_calls, 1000.0, 1)
+
+        client._fetch_metadata_batch([{"id": "0"}])
+        client._fetch_metadata_batch([{"id": "0"}])
+
+        assert sleep_calls == [pytest.approx(gmail_client._INTER_BATCH_DELAY_SECONDS)]
+
+    def test_no_sleep_once_enough_wall_clock_time_has_passed(self, monkeypatch):
+        sleep_calls = []
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(gmail_client.time, "sleep", lambda s: sleep_calls.append(s))
+        monkeypatch.setattr(gmail_client.time, "monotonic", lambda: clock["t"])
+        service = MagicMock()
+        outcomes = {"0": [{"id": "0", "payload": {"headers": []}, "snippet": "x"}]}
+        service.new_batch_http_request.side_effect = lambda callback: FakeBatch(callback, outcomes)
+        client = make_client(service)
+
+        client._fetch_metadata_batch([{"id": "0"}])
+        clock["t"] += gmail_client._INTER_BATCH_DELAY_SECONDS + 1  # plenty of real time has passed
+        client._fetch_metadata_batch([{"id": "0"}])
+
+        assert sleep_calls == []
+
+    def test_fetch_full_bodies_batch_shares_the_same_throttle(self, monkeypatch):
+        # _fetch_metadata_batch and fetch_full_bodies_batch are called back-to-back for the same
+        # account during a full download -- the throttle must apply across both, not just within
+        # each method independently.
+        sleep_calls = []
+        monkeypatch.setattr(gmail_client.time, "sleep", lambda s: sleep_calls.append(s))
+        monkeypatch.setattr(gmail_client.time, "monotonic", lambda: 1000.0)
+        service = MagicMock()
+        metadata_outcomes = {"0": [{"id": "0", "payload": {"headers": []}, "snippet": "x"}]}
+        body_outcomes = {"0": [{"payload": {}, "snippet": "body"}]}
+        calls = {"n": 0}
+
+        def batch_factory(callback):
+            calls["n"] += 1
+            return FakeBatch(callback, metadata_outcomes if calls["n"] == 1 else body_outcomes)
+
+        service.new_batch_http_request.side_effect = batch_factory
+        client = make_client(service)
+
+        client._fetch_metadata_batch([{"id": "0"}])
+        client.fetch_full_bodies_batch(["0"])
+
+        assert sleep_calls == [pytest.approx(gmail_client._INTER_BATCH_DELAY_SECONDS)]
+
+
 class TestFetchFullBodiesBatch:
     def test_fetches_multiple_bodies_in_one_batch(self, monkeypatch):
         monkeypatch.setattr(gmail_client.time, "sleep", lambda s: None)

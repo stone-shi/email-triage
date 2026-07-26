@@ -17,17 +17,46 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 # to permanent failures (404 deleted message, 400 bad request, auth errors) that should not retry.
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
+# Gmail counts every sub-request in an HTTP batch against the per-user-per-minute quota
+# individually -- batching only saves round-trips, not quota. For a small (unread-only) backlog
+# this never mattered, but a full-mailbox download can walk hundreds of consecutive 100-message
+# batches with nothing to slow it down, blowing through the per-minute quota within the first
+# minute. This is a proactive pace limit between successive batch calls (not the reactive
+# retry-with-backoff below, which only kicks in after a batch has already been rate-limited).
+_INTER_BATCH_DELAY_SECONDS = 2.0
+
 
 def _http_status(exc: Exception) -> Optional[int]:
     resp = getattr(exc, "resp", None)
     return getattr(resp, "status", None) if resp is not None else None
 
 class GmailClient:
+    # Class-level default so test doubles built via GmailClient.__new__ (bypassing __init__)
+    # still see a well-defined starting value; real instances shadow it with their own once
+    # _throttle_batch_call runs.
+    _last_batch_call_at: Optional[float] = None
+
     def __init__(self, settings_instance: Optional[Any] = None) -> None:
         self.settings = settings_instance if settings_instance else settings
         self.creds: Optional[Credentials] = None
         self.service = None
         self._authenticate()
+
+    def _throttle_batch_call(self) -> None:
+        """
+        Ensures at least _INTER_BATCH_DELAY_SECONDS has elapsed since this client's last Gmail
+        HTTP batch call (metadata or body) before letting the next one through -- across separate
+        top-level calls to _fetch_metadata_batch/fetch_full_bodies_batch too, not just between
+        chunks within one of them. A caller that chunks work across multiple invocations (e.g.
+        the full-mailbox archive downloader) would otherwise burst two 100-message batches
+        back-to-back at the seam between calls, with no pacing in between.
+        """
+        now = time.monotonic()
+        if self._last_batch_call_at is not None:
+            remaining = _INTER_BATCH_DELAY_SECONDS - (now - self._last_batch_call_at)
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_batch_call_at = time.monotonic()
 
     def _authenticate(self) -> None:
         """Handles OAuth 2.0 authentication flow and loads/persists tokens."""
@@ -174,6 +203,7 @@ class GmailClient:
                 time.sleep(delay)
 
             for i in range(0, len(pending_ids), chunk_size):
+                self._throttle_batch_call()
                 chunk_ids = pending_ids[i:i + chunk_size]
                 try:
                     batch = self.service.new_batch_http_request(callback=batch_callback)
@@ -411,6 +441,7 @@ class GmailClient:
                 time.sleep(delay)
 
             for i in range(0, len(pending_ids), chunk_size):
+                self._throttle_batch_call()
                 chunk_ids = pending_ids[i:i + chunk_size]
                 try:
                     batch = self.service.new_batch_http_request(callback=batch_callback)

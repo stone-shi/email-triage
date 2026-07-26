@@ -43,6 +43,15 @@ scheduler:
   max_per_account: 50
   days: 7
 
+# Recurring trigger for the full-mailbox archive downloader ("Download All" on the dashboard).
+# Sleeps for the full interval before its first run (not immediately on startup, unlike the sync
+# scheduler above), so a container restart doesn't kick off a full mailbox listing every time.
+# After the first (expensive) backfill, subsequent runs are cheap since already-archived messages
+# are skipped -- a nightly cadence just picks up whatever's new since the last run.
+download_all_scheduler:
+  enabled: true
+  interval: "24h"
+
 # Automatically mark already-triaged unread emails as read -- both on the mail server and in
 # the local cache -- once they've been shown via fetch_and_process_unread at least
 # `after_displays` times. Applied by the background sync scheduler on each tick. Each triage

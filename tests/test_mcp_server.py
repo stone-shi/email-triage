@@ -1246,6 +1246,8 @@ class TestDashboardRoutes:
         assert response.status_code == 200
         data = response.json()
         assert "scheduler" in data
+        assert "download_all_scheduler" in data
+        assert isinstance(data["download_all_scheduler"]["enabled"], bool)
         assert set(data["profiles"].keys()) == {"default"}
         profile_data = data["profiles"]["default"]
         assert profile_data["gmail"]["account"] == "gmail@test.com"

@@ -877,6 +877,11 @@ def _dashboard_status() -> Dict[str, Any]:
             "interval": settings.scheduler.interval,
             "interval_seconds": settings.scheduler.interval_seconds,
         },
+        "download_all_scheduler": {
+            "enabled": settings.download_all_scheduler.enabled,
+            "interval": settings.download_all_scheduler.interval,
+            "interval_seconds": settings.download_all_scheduler.interval_seconds,
+        },
         "profiles": profiles,
     }
 
@@ -1278,8 +1283,10 @@ async function loadStatus() {
   const res = await fetch('/api/status');
   const data = await res.json();
   const sched = data.scheduler;
+  const downloadSched = data.download_all_scheduler;
   document.getElementById('scheduler-info').textContent =
-    'Background scheduler: ' + (sched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + sched.interval + ')';
+    'Background scheduler: ' + (sched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + sched.interval + ')'
+    + ' · Full download scheduler: ' + (downloadSched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + downloadSched.interval + ')';
 
   const container = document.getElementById('profiles');
   container.innerHTML = '';
@@ -1567,12 +1574,30 @@ if __name__ == "__main__":
                     logger.exception("Background sync scheduler tick failed")
                 await anyio.sleep(interval)
 
+        async def download_all_scheduler_loop():
+            # Sleep first, then run -- unlike scheduler_loop, which fires immediately on startup
+            # since a fresh unread-status refresh is cheap and useful right away. A full-mailbox
+            # listing isn't: firing it on every container restart would be wasteful, so the first
+            # run only happens once a full interval (nightly, by default) has actually elapsed.
+            interval = settings.download_all_scheduler.interval_seconds
+            logger.info("Full-mailbox download scheduler enabled (interval: %ss)", interval)
+            while True:
+                await anyio.sleep(interval)
+                try:
+                    await anyio.to_thread.run_sync(full_download_all_profiles)
+                except Exception:
+                    logger.exception("Full-mailbox download scheduler tick failed")
+
         async def run_all():
             async with anyio.create_task_group() as tg:
                 if settings.scheduler.enabled:
                     tg.start_soon(scheduler_loop)
                 else:
                     logger.info("Background sync scheduler disabled via config.")
+                if settings.download_all_scheduler.enabled:
+                    tg.start_soon(download_all_scheduler_loop)
+                else:
+                    logger.info("Full-mailbox download scheduler disabled via config.")
                 # Run the server in the task group's own task (not start_soon) so that once it
                 # returns (e.g. after SIGTERM/SIGINT triggers uvicorn's graceful shutdown), we can
                 # explicitly wind down the scheduler loop too -- otherwise its `while True` never
@@ -1588,4 +1613,6 @@ if __name__ == "__main__":
         logger.info("Starting Stdio MCP server on stdin/stdout.")
         if settings.scheduler.enabled:
             logger.info("Background sync scheduler is only supported under SSE transport; skipping under stdio.")
+        if settings.download_all_scheduler.enabled:
+            logger.info("Full-mailbox download scheduler is only supported under SSE transport; skipping under stdio.")
         mcp.run(transport=settings.mcp_transport)

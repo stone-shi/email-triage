@@ -60,6 +60,21 @@ class SchedulerSettings(BaseModel):
         return parse_duration(self.interval)
 
 
+class DownloadAllSchedulerSettings(BaseModel):
+    """Recurring trigger for the full-mailbox archive downloader ("Download All"). Defaults to
+    enabled/nightly -- after the first (expensive) full backfill, subsequent runs are cheap since
+    already-archived messages are skipped, so a nightly cadence just picks up new mail."""
+    enabled: bool = Field(
+        default_factory=lambda: os.getenv("EMAIL_TRIAGE_DOWNLOAD_ALL_SCHEDULER_ENABLED", "true").strip().lower()
+        not in ("false", "0", "no", "")
+    )
+    interval: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_DOWNLOAD_ALL_SCHEDULER_INTERVAL", "24h"))
+
+    @property
+    def interval_seconds(self) -> float:
+        return parse_duration(self.interval, default_seconds=86400.0)
+
+
 class AutoMarkReadLevel0Settings(BaseModel):
     enabled: bool = Field(
         default_factory=lambda: os.getenv("EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_0_ENABLED", "false").strip().lower()
@@ -167,6 +182,7 @@ class Settings(BaseSettings):
 
     triage: TriageSettings = Field(default_factory=TriageSettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
+    download_all_scheduler: DownloadAllSchedulerSettings = Field(default_factory=DownloadAllSchedulerSettings)
     auto_mark_read: AutoMarkReadSettings = Field(default_factory=AutoMarkReadSettings)
 
     triage_base_url: str = "https://your-llm-proxy.com/v1"
@@ -299,6 +315,13 @@ class Settings(BaseSettings):
                     self.scheduler.max_per_account = int(scheduler_data["max_per_account"])
                 if "days" in scheduler_data and should_apply("EMAIL_TRIAGE_SCHEDULER_DAYS"):
                     self.scheduler.days = int(scheduler_data["days"])
+
+                # Map Download-All Scheduler section
+                download_all_scheduler_data = yaml_data.get("download_all_scheduler", {})
+                if "enabled" in download_all_scheduler_data and should_apply("EMAIL_TRIAGE_DOWNLOAD_ALL_SCHEDULER_ENABLED"):
+                    self.download_all_scheduler.enabled = bool(download_all_scheduler_data["enabled"])
+                if "interval" in download_all_scheduler_data and should_apply("EMAIL_TRIAGE_DOWNLOAD_ALL_SCHEDULER_INTERVAL"):
+                    self.download_all_scheduler.interval = str(download_all_scheduler_data["interval"])
 
                 # Map Auto Mark Read section -- each triage level configured independently
                 auto_mark_read_data = yaml_data.get("auto_mark_read", {})

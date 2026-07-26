@@ -8,7 +8,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import Settings, TriageSettings, SchedulerSettings, AutoMarkReadSettings, parse_duration, list_profile_names
+from config import (
+    Settings, TriageSettings, SchedulerSettings, DownloadAllSchedulerSettings, AutoMarkReadSettings,
+    parse_duration, list_profile_names,
+)
 
 
 class TestTriageSettings:
@@ -250,6 +253,67 @@ class TestSchedulerSettings:
     def test_settings_has_scheduler(self):
         s = Settings()
         assert isinstance(s.scheduler, SchedulerSettings)
+
+
+class TestDownloadAllSchedulerSettings:
+    def test_defaults_enabled_nightly(self):
+        with patch.dict(os.environ, {}, clear=True):
+            ds = DownloadAllSchedulerSettings()
+            assert ds.enabled is True
+            assert ds.interval == "24h"
+            assert ds.interval_seconds == 86400.0
+
+    def test_env_overrides(self):
+        with patch.dict(os.environ, {
+            "EMAIL_TRIAGE_DOWNLOAD_ALL_SCHEDULER_ENABLED": "false",
+            "EMAIL_TRIAGE_DOWNLOAD_ALL_SCHEDULER_INTERVAL": "12h",
+        }, clear=True):
+            ds = DownloadAllSchedulerSettings()
+            assert ds.enabled is False
+            assert ds.interval == "12h"
+            assert ds.interval_seconds == 43200.0
+
+    def test_settings_has_download_all_scheduler(self):
+        s = Settings()
+        assert isinstance(s.download_all_scheduler, DownloadAllSchedulerSettings)
+
+
+class TestDownloadAllSchedulerYamlLoading:
+    def test_load_from_yaml_download_all_scheduler_settings(self):
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            yaml.dump({
+                "download_all_scheduler": {
+                    "enabled": False,
+                    "interval": "48h",
+                }
+            }, f)
+            yaml_path = f.name
+
+        try:
+            with patch.dict(os.environ, {}, clear=True):
+                s = Settings(_env_file=None)
+                s.workspace_dir = Path(yaml_path).parent
+                s.load_from_yaml(yaml_path=Path(yaml_path), env_file=None)
+                assert s.download_all_scheduler.enabled is False
+                assert s.download_all_scheduler.interval == "48h"
+        finally:
+            os.unlink(yaml_path)
+
+    def test_yaml_does_not_override_env(self):
+        import yaml
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as f:
+            yaml.dump({"download_all_scheduler": {"enabled": False}}, f)
+            yaml_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"EMAIL_TRIAGE_DOWNLOAD_ALL_SCHEDULER_ENABLED": "true"}, clear=True):
+                s = Settings(_env_file=None)
+                s.workspace_dir = Path(yaml_path).parent
+                s.load_from_yaml(yaml_path=Path(yaml_path), env_file=None)
+                assert s.download_all_scheduler.enabled is True
+        finally:
+            os.unlink(yaml_path)
 
 
 class TestAutoMarkReadSettings:

@@ -8,10 +8,10 @@ triage:
   triage_type: "llm"
   tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
   tei_model: "localai/qwen3-reranker-0.6b"
-  tei_router_enabled: true
+  tei_router_enabled: false
   tei_noise_enabled: true
   tei_signal_enabled: true
-  tei_noise_threshold: 0.6
+  tei_noise_threshold: 0.99
   tei_signal_threshold: 0.6
   whitelist_vip_senders: []
   whitelist_domains:

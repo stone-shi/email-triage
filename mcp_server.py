@@ -855,9 +855,29 @@ def _profile_token_stats(name: str, days: int = 14) -> Dict[str, Any]:
     return {"tei_enabled": tei_enabled, "daily": daily}
 
 
+def _combine_token_stats(per_profile: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Sums each profile's 14-day daily token series into one cross-profile series for the dashboard."""
+    combined_by_day: Dict[str, Dict[str, int]] = {}
+    tei_enabled_any = False
+    for stats in per_profile:
+        tei_enabled_any = tei_enabled_any or stats.get("tei_enabled", False)
+        for entry in stats.get("daily", []):
+            agg = combined_by_day.setdefault(
+                entry["day"], {"input_tokens": 0, "output_tokens": 0, "tei_saved_tokens": 0}
+            )
+            agg["input_tokens"] += entry["input_tokens"]
+            agg["output_tokens"] += entry["output_tokens"]
+            agg["tei_saved_tokens"] += entry["tei_saved_tokens"]
+    return {
+        "tei_enabled": tei_enabled_any,
+        "daily": [{"day": day, **vals} for day, vals in sorted(combined_by_day.items())],
+    }
+
+
 def _dashboard_status() -> Dict[str, Any]:
     """Status payload backing the /api/status route and the web dashboard."""
     profiles: Dict[str, Any] = {}
+    token_stats_per_profile: List[Dict[str, Any]] = []
     for name in list_profile_names():
         status = _profile_status(name)
         # The "default" profile always exists (list_profile_names() guarantees it) even when no
@@ -865,10 +885,10 @@ def _dashboard_status() -> Dict[str, Any]:
         # Named profiles are always shown, even mid-setup, since the user created them intentionally.
         if name == "default" and not status["configured"]:
             continue
+        token_stats_per_profile.append(_profile_token_stats(name))
         profiles[name] = {
             **status,
             "config": _profile_config(name),
-            "token_stats": _profile_token_stats(name),
         }
 
     return {
@@ -882,6 +902,8 @@ def _dashboard_status() -> Dict[str, Any]:
             "interval": settings.download_all_scheduler.interval,
             "interval_seconds": settings.download_all_scheduler.interval_seconds,
         },
+        # Token spend is shown as one combined 14-day total on the dashboard, not per profile.
+        "token_stats": _combine_token_stats(token_stats_per_profile),
         "profiles": profiles,
     }
 
@@ -1209,76 +1231,147 @@ async def get_version(request: Request) -> PlainTextResponse:
 # WEB DASHBOARD (status + manual sync controls)
 # =====================================================================
 
+_DASHBOARD_SHARED_CSS = """
+  :root {
+    --surface-1: #fcfcfb;
+    --page-plane: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --border: rgba(11,11,11,0.10);
+    --gridline: #e1e0d9;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --status-good: #0ca30c;
+    --status-critical: #d03b3b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page-plane); color: var(--text-primary);
+    margin: 0; padding: 24px 32px 40px;
+  }
+  a { color: var(--series-1); text-decoration: none; }
+  .topbar { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .topbar h1 { font-size: 19px; margin: 0; font-weight: 600; }
+  .tabs { display: flex; gap: 4px; }
+  .tab { font-size: 13px; padding: 6px 12px; border-radius: 6px; color: var(--text-secondary); }
+  .tab:hover { background: var(--gridline); }
+  .tab.active { background: var(--surface-1); color: var(--text-primary); font-weight: 600; border: 1px solid var(--border); }
+  .subhead { color: var(--text-secondary); font-size: 12.5px; margin: 4px 0 20px; }
+  .muted { color: var(--text-muted); }
+  button {
+    background: var(--series-1); color: #fff; border: none; padding: 6px 14px;
+    border-radius: 6px; cursor: pointer; font-size: 12.5px; margin-right: 6px; font-weight: 500;
+  }
+  button:hover { filter: brightness(1.08); }
+  button.stop { background: var(--status-critical); }
+  button.ghost { background: transparent; color: var(--series-1); border: 1px solid var(--border); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
+  .panel {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(11,11,11,0.04);
+  }
+  .panel-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+  .panel-header h2 { font-size: 14.5px; margin: 0; font-weight: 600; display: inline; }
+"""
+
 _DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Email Triage - Sync Dashboard</title>
+<title>Email Triage - Dashboard</title>
 <style>
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #f5f6f8; color: #1f2328; margin: 0; padding: 24px; }
-  h1 { font-size: 20px; margin-bottom: 4px; }
-  .scheduler-info { color: #57606a; margin-bottom: 20px; font-size: 13px; }
-  .global-actions { margin-bottom: 20px; }
-  button { background: #2563eb; color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 8px; }
-  button.stop { background: #dc2626; }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
-  .card { background: #ffffff; border: 1px solid #d0d7de; border-radius: 10px; padding: 16px; box-shadow: 0 1px 2px rgba(31, 35, 40, 0.06); }
-  .card h2 { margin: 0 0 8px; font-size: 15px; }
-  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
+""" + _DASHBOARD_SHARED_CSS + """
+  .badge { display: inline-block; font-size: 10.5px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; font-weight: 500; }
   .badge.running { background: #dbeafe; color: #1d4ed8; }
-  .badge.idle { background: #eef0f2; color: #57606a; }
-  .account { border-top: 1px solid #e5e7eb; padding-top: 8px; margin-top: 8px; font-size: 13px; }
-  .account .label { color: #57606a; }
-  .errors { color: #b91c1c; }
-  details.config { margin-top: 12px; }
-  details.config summary { cursor: pointer; font-size: 12px; color: #2563eb; }
-  .cfg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; font-size: 12px; margin-top: 8px; }
-  .cfg-key { color: #57606a; }
-  .cfg-val { word-break: break-word; }
-  .counts { color: #57606a; }
-  .archive { margin-top: 6px; font-size: 12px; color: #57606a; }
+  .badge.idle { background: var(--gridline); color: var(--text-secondary); }
+  .pill { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: var(--gridline); color: var(--text-secondary); margin: 1px 3px 1px 0; white-space: nowrap; }
+  .pill.important { background: #fde3d3; color: #9a4a1f; }
+  .pill.error { background: #fbdada; color: #9a1f1f; }
+
+  .stat-row { display: flex; gap: 28px; margin-bottom: 14px; flex-wrap: wrap; }
+  .stat-tile { min-width: 120px; }
+  .stat-value { font-size: 24px; font-weight: 600; line-height: 1.15; }
+  .stat-label { font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; }
+
+  .token-chart { display: flex; align-items: flex-end; gap: 4px; height: 64px; margin-top: 4px; }
+  .token-bar { flex: 1; position: relative; background: var(--series-2); border-radius: 2px 2px 0 0; min-height: 2px; }
+  .token-bar-in { position: absolute; bottom: 0; left: 0; width: 100%; background: var(--series-1); border-radius: 2px 2px 0 0; }
+  .chart-legend { display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--text-secondary); margin-top: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+
+  table.profiles-table { width: 100%; border-collapse: collapse; }
+  table.profiles-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); padding: 8px 12px; border-bottom: 1px solid var(--gridline); }
+  table.profiles-table td { padding: 12px; border-bottom: 1px solid var(--gridline); font-size: 13px; vertical-align: top; }
+  table.profiles-table tr:last-child td { border-bottom: none; }
+  .acct-line { margin-bottom: 3px; }
+  .acct-email { font-weight: 500; }
+  tr.detail-row td { background: var(--page-plane); padding: 14px 18px; border-bottom: 1px solid var(--gridline); }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .account-detail { font-size: 12.5px; }
+  .account-detail .label { color: var(--text-secondary); font-weight: 600; margin-bottom: 4px; }
+  .errors { color: var(--status-critical); }
   .progress-wrap { margin-top: 6px; }
-  .progress-bar { background: #e5e7eb; border-radius: 999px; height: 6px; overflow: hidden; }
-  .progress-fill { background: #2563eb; height: 100%; }
-  .progress-label { font-size: 11px; color: #57606a; margin-top: 3px; }
-  .token-stats { margin-top: 12px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
-  .token-summary { font-size: 12px; color: #57606a; margin-bottom: 6px; }
-  .token-chart { display: flex; align-items: flex-end; gap: 3px; height: 48px; }
-  .token-bar { flex: 1; position: relative; background: #bfdbfe; border-radius: 2px 2px 0 0; min-height: 2px; }
-  .token-bar-in { position: absolute; bottom: 0; left: 0; width: 100%; background: #2563eb; border-radius: 2px 2px 0 0; }
-  .token-legend { font-size: 11px; color: #9aa0a6; margin-top: 4px; }
-  .token-legend .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
-  .logs-section { margin-top: 28px; }
-  .logs-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-  .logs-header h2 { font-size: 15px; margin: 0; }
-  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; }
-  .live-dot.disconnected { background: #d0d7de; }
-  #log-console { background: #0f1115; color: #d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 12px; border-radius: 8px; height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
-  #log-console .lvl-ERROR { color: #f87171; }
-  #log-console .lvl-WARNING { color: #fbbf24; }
-  #log-console .lvl-INFO { color: #d1d5db; }
+  .progress-bar { background: var(--gridline); border-radius: 999px; height: 6px; overflow: hidden; }
+  .progress-fill { background: var(--series-1); height: 100%; }
+  .progress-label { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+  .archive { margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
+  details.config { margin-top: 4px; grid-column: 1 / -1; }
+  details.config summary { cursor: pointer; font-size: 12px; color: var(--series-1); }
+  .cfg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; font-size: 12px; margin-top: 8px; }
+  .cfg-key { color: var(--text-secondary); }
+  .cfg-val { word-break: break-word; }
 </style>
 </head>
 <body>
-  <h1>Email Triage &mdash; Sync Dashboard</h1>
-  <div class="scheduler-info" id="scheduler-info">Loading...</div>
-  <div class="global-actions">
-    <button onclick="startSync('all')">Sync All</button>
-    <button class="stop" onclick="stopSync('all')">Stop All</button>
+  <div class="topbar">
+    <h1>Email Triage</h1>
+    <nav class="tabs">
+      <a class="tab active" href="/dashboard">Dashboard</a>
+      <a class="tab" href="/dashboard/logs">Logs</a>
+    </nav>
   </div>
-  <div class="grid" id="profiles"></div>
+  <div class="subhead" id="scheduler-info">Loading...</div>
 
-  <div class="logs-section">
-    <div class="logs-header">
-      <h2>Live Logs</h2>
-      <span class="live-dot" id="log-live-dot"></span>
-      <button onclick="document.getElementById('log-console').textContent = ''">Clear</button>
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Token Usage</h2>
+      <span class="muted" id="token-window-label"></span>
     </div>
-    <div id="log-console"></div>
-  </div>
+    <div class="stat-row" id="token-stat-tiles"></div>
+    <div class="token-chart" id="token-chart"></div>
+    <div class="chart-legend">
+      <span class="legend-item"><span class="swatch" style="background:var(--series-1)"></span>Input</span>
+      <span class="legend-item"><span class="swatch" style="background:var(--series-2)"></span>Output</span>
+      <span class="muted" id="tei-note"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Profiles</h2>
+      <div>
+        <button onclick="startSync('all')">Sync All</button>
+        <button class="stop" onclick="stopSync('all')">Stop All</button>
+      </div>
+    </div>
+    <table class="profiles-table">
+      <thead>
+        <tr><th>Profile</th><th>Gmail</th><th>IMAP</th><th>Errors</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="profiles-body"></tbody>
+    </table>
+  </section>
 
 <script>
+// Native <details> elements (and our own expand/collapse toggles) lose their open/closed state
+// whenever the periodic poll below rebuilds the DOM from scratch -- persist both here (keyed by
+// profile name) and restore them on each render instead of always defaulting to closed.
+const configOpenState = {};
+const detailOpenState = {};
+
 async function loadStatus() {
   const res = await fetch('/api/status');
   const data = await res.json();
@@ -1286,23 +1379,91 @@ async function loadStatus() {
   const downloadSched = data.download_all_scheduler;
   document.getElementById('scheduler-info').textContent =
     'Background scheduler: ' + (sched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + sched.interval + ')'
-    + ' · Full download scheduler: ' + (downloadSched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + downloadSched.interval + ')';
+    + '  \\u00b7  Full download scheduler: ' + (downloadSched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + downloadSched.interval + ')';
 
-  const container = document.getElementById('profiles');
-  container.innerHTML = '';
+  renderTokenStats(data.token_stats);
+
+  const tbody = document.getElementById('profiles-body');
+  tbody.innerHTML = '';
   for (const [name, p] of Object.entries(data.profiles)) {
-    container.appendChild(renderProfileCard(name, p));
+    tbody.appendChild(renderProfileMainRow(name, p));
+    tbody.appendChild(renderProfileDetailRow(name, p));
   }
 }
 
-function renderCounts(counts) {
-  if (!counts) return '';
-  return '<div class="counts">total cached: ' + counts.total
-    + ' &middot; L0: ' + counts.level_0
-    + ' &middot; L1: ' + counts.level_1
-    + ' &middot; L2: ' + counts.level_2
-    + (counts.pending_triage ? ' &middot; pending: ' + counts.pending_triage : '')
-    + '</div>';
+function formatTokens(n) {
+  n = n || 0;
+  if (Math.abs(n) >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function statTile(label, value) {
+  return '<div class="stat-tile"><div class="stat-value">' + value + '</div><div class="stat-label">' + label + '</div></div>';
+}
+
+function renderTokenStats(stats) {
+  const tilesEl = document.getElementById('token-stat-tiles');
+  const chartEl = document.getElementById('token-chart');
+  const teiNote = document.getElementById('tei-note');
+  const windowLabel = document.getElementById('token-window-label');
+  if (!stats || !stats.daily || !stats.daily.length) {
+    tilesEl.innerHTML = '';
+    chartEl.innerHTML = '';
+    teiNote.textContent = '';
+    windowLabel.textContent = '';
+    return;
+  }
+  const daily = stats.daily;
+  const totalIn = daily.reduce((a, d) => a + d.input_tokens, 0);
+  const totalOut = daily.reduce((a, d) => a + d.output_tokens, 0);
+  const totalSaved = daily.reduce((a, d) => a + d.tei_saved_tokens, 0);
+  windowLabel.textContent = 'last ' + daily.length + ' days \\u00b7 all profiles';
+
+  tilesEl.innerHTML =
+    statTile('Total input', formatTokens(totalIn)) +
+    statTile('Total output', formatTokens(totalOut)) +
+    statTile('Saved by router', stats.tei_enabled ? formatTokens(totalSaved) : '\\u2014');
+
+  const maxTotal = Math.max(1, ...daily.map(d => d.input_tokens + d.output_tokens));
+  chartEl.innerHTML = daily.map(d => {
+    const total = d.input_tokens + d.output_tokens;
+    const heightPct = Math.max(Math.round((total / maxTotal) * 100), total > 0 ? 4 : 1);
+    const inputPct = total ? Math.round((d.input_tokens / total) * 100) : 0;
+    const title = d.day + ': ' + formatTokens(d.input_tokens) + ' in / ' + formatTokens(d.output_tokens) + ' out'
+      + (d.tei_saved_tokens ? ' / ~' + formatTokens(d.tei_saved_tokens) + ' saved by router' : '');
+    return '<div class="token-bar" title="' + title + '" style="height:' + heightPct + '%">'
+      + '<div class="token-bar-in" style="height:' + inputPct + '%"></div>'
+      + '</div>';
+  }).join('');
+
+  teiNote.textContent = stats.tei_enabled ? '' : '(router disabled on all profiles)';
+}
+
+function pill(text, cls) {
+  return '<span class="pill' + (cls ? ' ' + cls : '') + '">' + text + '</span>';
+}
+
+function acctSummary(acct) {
+  const counts = acct.counts || {};
+  const s = acct.summary;
+  const pills = [
+    counts.level_2 ? pill(counts.level_2 + ' L2', 'important') : '',
+    counts.level_1 ? pill(counts.level_1 + ' L1') : '',
+    counts.level_0 ? pill(counts.level_0 + ' L0') : '',
+    counts.pending_triage ? pill(counts.pending_triage + ' pending') : '',
+  ].join('');
+  const lastSync = s && s.last_download_at ? s.last_download_at : 'never synced';
+  return '<div class="acct-line acct-email">' + acct.account + '</div>'
+    + '<div class="acct-line">' + (pills || '<span class="muted">no cached mail</span>') + '</div>'
+    + '<div class="acct-line muted">last sync: ' + lastSync + '</div>';
+}
+
+function acctErrors(acct) {
+  const errs = [];
+  if (acct.summary && acct.summary.errors && acct.summary.errors.length) errs.push(...acct.summary.errors);
+  if (acct.full_download_summary && acct.full_download_summary.errors && acct.full_download_summary.errors.length) errs.push(...acct.full_download_summary.errors);
+  return errs;
 }
 
 function renderProgress(progress) {
@@ -1311,34 +1472,13 @@ function renderProgress(progress) {
   const processed = progress.processed || 0;
   const pct = total ? Math.round((processed / total) * 100) : 0;
   const label = progress.phase === 'listing'
-    ? 'listing unread mail&hellip;'
+    ? 'listing unread mail\\u2026'
     : progress.phase === 'listing_all'
-      ? 'listing full mailbox&hellip;'
-      : processed + ' / ' + total + (progress.current_subject ? ' &mdash; ' + progress.current_subject : '');
+      ? 'listing full mailbox\\u2026'
+      : processed + ' / ' + total + (progress.current_subject ? ' \\u2014 ' + progress.current_subject : '');
   return '<div class="progress-wrap">'
     + '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div>'
     + '<div class="progress-label">' + label + '</div>'
-    + '</div>';
-}
-
-function renderAccount(acct) {
-  const s = acct.summary;
-  const counts = renderCounts(acct.counts);
-  const progress = renderProgress(acct.progress);
-  const archive = renderFullDownload(acct);
-  if (!s) {
-    return '<div class="account"><div class="label">' + acct.account + '</div>' + counts + '<div>never synced</div>' + progress + archive + '</div>';
-  }
-  const errors = (s.errors && s.errors.length) ? '<div class="errors">' + s.errors.join('; ') + '</div>' : '';
-  const status = s.status ? ' (' + s.status + ')' : '';
-  return '<div class="account">'
-    + '<div class="label">' + acct.account + status + '</div>'
-    + counts
-    + '<div>last sync: ' + (s.last_download_at || 'n/a') + '</div>'
-    + '<div>downloaded: ' + (s.downloaded ?? 0) + ' &middot; reconciled: ' + (s.reconciled_read ?? 0) + ' &middot; triaged: ' + (s.triaged ?? 0) + '</div>'
-    + errors
-    + progress
-    + archive
     + '</div>';
 }
 
@@ -1346,15 +1486,24 @@ function renderFullDownload(acct) {
   const s = acct.full_download_summary;
   const progress = renderProgress(acct.full_download_progress);
   if (!s && !progress) return '';
-  const errors = (s && s.errors && s.errors.length) ? '<div class="errors">' + s.errors.join('; ') + '</div>' : '';
   const line = s
     ? 'full archive: last run ' + (s.last_full_download_at || 'n/a')
-      + ' &middot; found ' + (s.total_on_server ?? 0)
-      + ' &middot; downloaded ' + (s.downloaded ?? 0)
-      + ' &middot; already cached ' + (s.skipped_cached ?? 0)
+      + ' \\u00b7 found ' + (s.total_on_server ?? 0)
+      + ' \\u00b7 downloaded ' + (s.downloaded ?? 0)
+      + ' \\u00b7 already cached ' + (s.skipped_cached ?? 0)
       + (s.status === 'stopped' ? ' (stopped)' : '')
-    : 'full archive: in progress&hellip;';
-  return '<div class="archive"><div>' + line + '</div>' + errors + progress + '</div>';
+    : 'full archive: in progress\\u2026';
+  return '<div class="archive"><div>' + line + '</div>' + progress + '</div>';
+}
+
+function renderAccountDetail(acct) {
+  const s = acct.summary;
+  const counts = s
+    ? '<div>downloaded: ' + (s.downloaded ?? 0) + ' \\u00b7 reconciled: ' + (s.reconciled_read ?? 0) + ' \\u00b7 triaged: ' + (s.triaged ?? 0) + '</div>'
+    : '';
+  const errors = acctErrors(acct);
+  const errorsHtml = errors.length ? '<div class="errors">' + errors.join('; ') + '</div>' : '';
+  return counts + errorsHtml + renderProgress(acct.progress) + renderFullDownload(acct);
 }
 
 function renderConfig(cfg) {
@@ -1365,72 +1514,57 @@ function renderConfig(cfg) {
   return '<details class="config"><summary>Configuration</summary><div class="cfg-grid">' + rows + '</div></details>';
 }
 
-function formatTokens(n) {
-  n = n || 0;
-  if (Math.abs(n) >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'K';
-  return String(n);
+function cssEscape(name) {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
-function renderTokenStats(stats) {
-  if (!stats || !stats.daily || !stats.daily.length) return '';
-  const daily = stats.daily;
-  const today = daily[daily.length - 1];
-  const maxTotal = Math.max(1, ...daily.map(d => d.input_tokens + d.output_tokens));
-
-  const bars = daily.map(d => {
-    const total = d.input_tokens + d.output_tokens;
-    const heightPct = Math.max(Math.round((total / maxTotal) * 100), total > 0 ? 4 : 1);
-    const inputPct = total ? Math.round((d.input_tokens / total) * 100) : 0;
-    const title = d.day + ': ' + formatTokens(d.input_tokens) + ' in / ' + formatTokens(d.output_tokens) + ' out'
-      + (d.tei_saved_tokens ? ' / ~' + formatTokens(d.tei_saved_tokens) + ' saved by TEI' : '');
-    return '<div class="token-bar" title="' + title + '" style="height:' + heightPct + '%">'
-      + '<div class="token-bar-in" style="height:' + inputPct + '%"></div>'
-      + '</div>';
-  }).join('');
-
-  const teiLine = stats.tei_enabled
-    ? 'TEI saved today: ~' + formatTokens(today.tei_saved_tokens)
-    : 'TEI saved today: 0 (disabled)';
-
-  return '<div class="token-stats">'
-    + '<div class="token-summary">Today: ' + formatTokens(today.input_tokens) + ' in &middot; '
-    + formatTokens(today.output_tokens) + ' out &middot; ' + teiLine + '</div>'
-    + '<div class="token-chart">' + bars + '</div>'
-    + '<div class="token-legend"><span class="swatch" style="background:#2563eb"></span>input'
-    + '&nbsp;&nbsp;<span class="swatch" style="background:#bfdbfe"></span>output'
-    + '&nbsp;&nbsp;(last ' + daily.length + ' days)</div>'
-    + '</div>';
-}
-
-// Native <details> elements lose their open/closed state whenever the periodic poll below
-// rebuilds the DOM from scratch -- persist it here (keyed by profile name) and restore it
-// on each render instead of always defaulting to closed.
-const configOpenState = {};
-
-function renderProfileCard(name, p) {
-  const div = document.createElement('div');
-  div.className = 'card';
+function renderProfileMainRow(name, p) {
+  const tr = document.createElement('tr');
   const badge = p.running
     ? '<span class="badge running">running</span>'
     : '<span class="badge idle">idle</span>';
-  div.innerHTML = '<h2>' + name + ' ' + badge + '</h2>'
-    + renderAccount(p.gmail)
-    + renderAccount(p.imap)
-    + '<div style="margin-top:12px">'
-    + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startSync(\\'' + name + '\\')">Sync Now</button>'
-    + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startFullDownload(\\'' + name + '\\')">Download All</button>'
-    + '<button class="stop" ' + (p.running ? '' : 'disabled') + ' onclick="stopSync(\\'' + name + '\\')">Stop</button>'
-    + '</div>'
-    + renderTokenStats(p.token_stats)
-    + renderConfig(p.config);
+  const allErrors = [...acctErrors(p.gmail), ...acctErrors(p.imap)];
+  const errorsCell = allErrors.length
+    ? '<span class="pill error">' + allErrors.length + ' error' + (allErrors.length > 1 ? 's' : '') + '</span>'
+    : '<span class="muted">\\u2014</span>';
 
-  const details = div.querySelector('details.config');
+  tr.innerHTML =
+    '<td><strong>' + name + '</strong>' + badge + '</td>'
+    + '<td>' + acctSummary(p.gmail) + '</td>'
+    + '<td>' + acctSummary(p.imap) + '</td>'
+    + '<td>' + errorsCell + '</td>'
+    + '<td>'
+      + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startSync(\\'' + name + '\\')">Sync</button>'
+      + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startFullDownload(\\'' + name + '\\')">Download All</button>'
+      + '<button class="stop" ' + (p.running ? '' : 'disabled') + ' onclick="stopSync(\\'' + name + '\\')">Stop</button>'
+      + '<button class="ghost" onclick="toggleDetail(\\'' + name + '\\')">Details</button>'
+    + '</td>';
+  return tr;
+}
+
+function renderProfileDetailRow(name, p) {
+  const tr = document.createElement('tr');
+  tr.className = 'detail-row';
+  tr.id = 'detail-' + cssEscape(name);
+  tr.style.display = detailOpenState[name] ? '' : 'none';
+  tr.innerHTML = '<td colspan="5"><div class="detail-grid">'
+    + '<div class="account-detail"><div class="label">Gmail</div>' + renderAccountDetail(p.gmail) + '</div>'
+    + '<div class="account-detail"><div class="label">IMAP</div>' + renderAccountDetail(p.imap) + '</div>'
+    + renderConfig(p.config)
+    + '</div></td>';
+
+  const details = tr.querySelector('details.config');
   if (details) {
     details.open = !!configOpenState[name];
     details.addEventListener('toggle', () => { configOpenState[name] = details.open; });
   }
-  return div;
+  return tr;
+}
+
+function toggleDetail(name) {
+  detailOpenState[name] = !detailOpenState[name];
+  const row = document.getElementById('detail-' + cssEscape(name));
+  if (row) row.style.display = detailOpenState[name] ? '' : 'none';
 }
 
 async function startSync(profile) {
@@ -1450,7 +1584,46 @@ async function startFullDownload(profile) {
 
 loadStatus();
 setInterval(loadStatus, 5000);
+</script>
+</body>
+</html>
+"""
 
+_DASHBOARD_LOGS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Email Triage - Logs</title>
+<style>
+""" + _DASHBOARD_SHARED_CSS + """
+  .logs-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status-good); display: inline-block; }
+  .live-dot.disconnected { background: var(--gridline); }
+  #log-console { background: #0f1115; color: #d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 12px; border-radius: 8px; height: 74vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  #log-console .lvl-ERROR { color: #f87171; }
+  #log-console .lvl-WARNING { color: #fbbf24; }
+  #log-console .lvl-INFO { color: #d1d5db; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Email Triage</h1>
+    <nav class="tabs">
+      <a class="tab" href="/dashboard">Dashboard</a>
+      <a class="tab active" href="/dashboard/logs">Logs</a>
+    </nav>
+  </div>
+  <div class="subhead">Live application log stream (last 500 lines, in-memory).</div>
+
+  <section class="panel">
+    <div class="logs-header">
+      <span class="live-dot" id="log-live-dot"></span>
+      <button class="ghost" onclick="document.getElementById('log-console').textContent = ''">Clear</button>
+    </div>
+    <div id="log-console"></div>
+  </section>
+
+<script>
 const MAX_LOG_LINES = 500;
 
 function appendLogLine(line) {
@@ -1490,6 +1663,11 @@ connectLogStream();
 @mcp.custom_route("/dashboard", methods=["GET"])
 async def dashboard(request: Request) -> HTMLResponse:
     return HTMLResponse(_DASHBOARD_HTML)
+
+
+@mcp.custom_route("/dashboard/logs", methods=["GET"])
+async def dashboard_logs(request: Request) -> HTMLResponse:
+    return HTMLResponse(_DASHBOARD_LOGS_HTML)
 
 
 @mcp.custom_route("/api/status", methods=["GET"])

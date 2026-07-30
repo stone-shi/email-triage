@@ -1239,7 +1239,13 @@ class TestDashboardRoutes:
         response = client.get("/dashboard")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "Sync Dashboard" in response.text
+        assert "Email Triage" in response.text
+
+    def test_dashboard_logs_returns_html(self, client):
+        response = client.get("/dashboard/logs")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "log-console" in response.text
 
     def test_api_status_shape(self, client):
         response = client.get("/api/status")
@@ -1255,8 +1261,10 @@ class TestDashboardRoutes:
         assert profile_data["gmail"]["progress"] is None
         assert "config" in profile_data
         assert profile_data["config"]["gmail_account"] == "gmail@test.com"
-        assert "token_stats" in profile_data
-        assert profile_data["token_stats"]["daily"][0]["day"] == "2026-07-23"
+        # token stats are combined across all profiles at the top level, not duplicated per profile
+        assert "token_stats" not in profile_data
+        assert "token_stats" in data
+        assert data["token_stats"]["daily"][0]["day"] == "2026-07-23"
         # secrets must never appear in the payload, only a presence indicator
         assert "super-secret" not in response.text
         assert profile_data["config"]["triage_api_key"] == "•••• (set)"

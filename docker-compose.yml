@@ -2,24 +2,24 @@ version: '3.8'
 
 services:
   email-triage-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: registry.shifamily.com/homestack/email-triage:latest
     container_name: email-triage-mcp
     env_file:
-      - ai.env
+      - .env
     environment:
       - EMAIL_TRIAGE_MCP_TRANSPORT=sse
     ports:
       - "4003:8000"
     volumes:
-      - email-triage-mcp-config:/app/profiles
+      - ./profiles:/app/profiles
       - ./data:/app/data
     restart: unless-stopped
     command: ["python", "mcp_server.py"]
     networks:
       - home-net
-
-volumes:
-  email-triage-mcp-config:
 
 networks:
   home-net:

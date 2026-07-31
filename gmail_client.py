@@ -4,14 +4,11 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from config import settings
+from credential_source import CredentialSource, FileTokenSource, SCOPES
 
 logger = logging.getLogger("email_triage.gmail")
-
-# If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
 # HTTP statuses worth retrying with backoff (rate limiting / transient server errors), as opposed
 # to permanent failures (404 deleted message, 400 bad request, auth errors) that should not retry.
@@ -36,8 +33,17 @@ class GmailClient:
     # _throttle_batch_call runs.
     _last_batch_call_at: Optional[float] = None
 
-    def __init__(self, settings_instance: Optional[Any] = None) -> None:
+    def __init__(
+        self,
+        settings_instance: Optional[Any] = None,
+        credential_source: Optional[CredentialSource] = None,
+    ) -> None:
         self.settings = settings_instance if settings_instance else settings
+        self._source: CredentialSource = credential_source or FileTokenSource(
+            token_path=self.settings.gmail_token_path,
+            credentials_path=self.settings.gmail_credentials_path,
+            headless_mode=self.settings.headless_mode,
+        )
         self.creds: Optional[Credentials] = None
         self.service = None
         self._authenticate()
@@ -59,15 +65,15 @@ class GmailClient:
         self._last_batch_call_at = time.monotonic()
 
     def _authenticate(self) -> None:
-        """Handles OAuth 2.0 authentication flow and loads/persists tokens."""
+        """Handles OAuth 2.0 authentication flow and loads/persists tokens via
+        self._source (FileTokenSource by default -- see credential_source.py).
+        """
         # Allow local HTTP redirect URIs (needed for container/headless OAuth flow)
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         try:
-            if self.settings.gmail_token_path.exists():
-                self.creds = Credentials.from_authorized_user_file(
-                    str(self.settings.gmail_token_path), SCOPES
-                )
-                logger.info("Loaded Gmail credentials from persistent token file.")
+            self.creds = self._source.load()
+            if self.creds:
+                logger.info("Loaded existing Gmail credentials.")
 
             # If there are no (valid) credentials available, let the user log in.
             if not self.creds or not self.creds.valid:
@@ -80,62 +86,14 @@ class GmailClient:
                         logger.info("Gmail token refreshed successfully.")
                     except Exception as refresh_err:
                         logger.warning("Silent token refresh failed (%s). Falling back to full OAuth flow.", refresh_err)
-                
+
                 if trigger_oauth:
-                    logger.info("No valid persistent token found or refresh failed. Initializing OAuth local server flow...")
-                    if not self.settings.gmail_credentials_path.exists():
-                        raise FileNotFoundError(
-                            f"Google client secrets file not found at {self.settings.gmail_credentials_path}. "
-                            f"Please make sure gog credentials exist."
-                        )
-                    import json
-                    with open(self.settings.gmail_credentials_path, 'r') as f:
-                        raw_secrets = json.load(f)
-                    
-                    if "installed" in raw_secrets or "web" in raw_secrets:
-                        flow = InstalledAppFlow.from_client_secrets_file(
-                            str(self.settings.gmail_credentials_path), SCOPES
-                        )
-                    else:
-                        client_config = {
-                            "installed": {
-                                "client_id": raw_secrets.get("client_id"),
-                                "client_secret": raw_secrets.get("client_secret"),
-                                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                                "token_uri": "https://oauth2.googleapis.com/token",
-                                "redirect_uris": ["http://localhost"]
-                            }
-                        }
-                        flow = InstalledAppFlow.from_client_config(client_config, scopes=SCOPES)
-                    import sys
-                    if self.settings.headless_mode:
-                        flow.redirect_uri = "http://localhost"
-                        auth_url, _ = flow.authorization_url(access_type='offline', prompt='select_account')
-                        
-                        sys.stderr.write(f"\n[HEADLESS GMAIL OAUTH REQUIRED]:\n1. Open this URL in your desktop browser:\n👉 {auth_url}\n\n")
-                        sys.stderr.write("2. Grant permissions and copy the FULL generated landing URL from your browser's address bar (starts with http://localhost...).\n")
-                        sys.stderr.write("3. Paste the full redirect URL below:\n\n")
-                        sys.stderr.write("Paste FULL Redirect URL here: ")
-                        sys.stderr.flush()
-                        
-                        redirect_response = input()
-                        flow.fetch_token(authorization_response=redirect_response.strip())
-                        self.creds = flow.credentials
-                    else:
-                        def stderr_prompt_handler(url: str) -> None:
-                            sys.stderr.write(f"\n[GMAIL OAUTH REQUIRED]: Please visit this URL to authorize access:\n👉 {url}\n\n")
-                            sys.stderr.flush()
-                        
-                        self.creds = flow.run_local_server(
-                            port=0, 
-                            prompt='select_account', 
-                            authorization_prompt_handler=stderr_prompt_handler
-                        )
-                
+                    logger.info("No valid persistent token found or refresh failed. Initializing OAuth flow...")
+                    self.creds = self._source.interactive_or_fail()
+
                 # Save the credentials for the next run
-                with open(self.settings.gmail_token_path, 'w') as token_file:
-                    token_file.write(self.creds.to_json())
-                logger.info("Gmail token persisted successfully to %s", self.settings.gmail_token_path)
+                self._source.save(self.creds)
+                logger.info("Gmail token persisted successfully.")
 
             self.service = build('gmail', 'v1', credentials=self.creds, cache_discovery=False)
             logger.info("Gmail API Service client successfully created.")

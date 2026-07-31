@@ -47,10 +47,25 @@ run_tests() {
     echo "--> Tests complete."
 }
 
+run_frontend_checks() {
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "==> Skipping frontend checks: npm not found on this machine."
+        return
+    fi
+    if [ ! -f "$SCRIPT_DIR/web/package.json" ]; then
+        echo "==> Skipping frontend checks: web/package.json not found."
+        return
+    fi
+    echo "==> Running frontend typecheck (web/)..."
+    (cd "$SCRIPT_DIR/web" && npm install --silent && npm run typecheck)
+    echo "--> Frontend typecheck complete."
+}
+
 main() {
     setup_venv
     install_deps
     run_tests "$@"
+    run_frontend_checks
 }
 
 main "$@"

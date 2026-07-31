@@ -470,35 +470,69 @@ def main() -> None:
     
     run_results = []
 
-    # --- Ingest Gmail ---
+    # --- Resolve accounts: a data/app.db user for this profile (if migrated) loops over
+    # however many Gmail/Zoho/IMAP integrations they've connected; otherwise fall back to
+    # exactly the original single-Gmail+single-IMAP construction below, unchanged.
+    db_accounts = None
     try:
-        if args.auth and settings.gmail_token_path.exists():
-            if args.human:
-                logger.info("Forcing re-authentication: purging persistent token file...")
-            try:
-                settings.gmail_token_path.unlink()
-            except Exception:
-                pass
-                
-        if args.human:
-            logger.info("Initializing Gmail Client Layer...")
-        gmail = GmailClient(settings_instance=settings)
-        gmail_emails = gmail.fetch_unread_messages(max_results=args.max, days=args.days)
-        process_account_emails(gmail_emails, gmail, engine, db, stats, run_results, args.human, settings_instance=settings)
-    except Exception as e:
-        if args.human:
-            logger.error("Error during Gmail pipeline run: %s", e)
+        import appdb
+        import users_store
+        import account_clients as _account_clients
 
-    # --- Ingest IMAP (Zoho) ---
-    try:
-        if args.human:
-            logger.info("Initializing IMAP Client Layer...")
-        imap = IMAPClient(settings_instance=settings)
-        imap_emails = imap.fetch_unread_headers(max_results=args.max, days=args.days)
-        process_account_emails(imap_emails, imap, engine, db, stats, run_results, args.human, settings_instance=settings)
+        if appdb.DEFAULT_APP_DB_PATH.exists():
+            with appdb.get_conn() as conn:
+                user_row = users_store.get_user_by_username(conn, args.profile)
+                if user_row is not None:
+                    db_accounts = _account_clients.clients_for_user(conn, user_row["id"], settings, for_triage=True)
     except Exception as e:
         if args.human:
-            logger.error("Error during IMAP pipeline run: %s", e)
+            logger.error("Failed to resolve DB-backed integrations for profile %s: %s", args.profile, e)
+        db_accounts = None
+
+    if db_accounts is not None:
+        for ac in db_accounts:
+            try:
+                if args.human:
+                    logger.info("Initializing %s client for %s...", ac.provider, ac.account)
+                emails = (
+                    ac.client.fetch_unread_messages(max_results=args.max, days=args.days)
+                    if ac.provider == "gmail"
+                    else ac.client.fetch_unread_headers(max_results=args.max, days=args.days)
+                )
+                process_account_emails(emails, ac.client, engine, db, stats, run_results, args.human, settings_instance=settings)
+            except Exception as e:
+                if args.human:
+                    logger.error("Error during %s pipeline run for %s: %s", ac.provider, ac.account, e)
+    else:
+        # --- Ingest Gmail ---
+        try:
+            if args.auth and settings.gmail_token_path.exists():
+                if args.human:
+                    logger.info("Forcing re-authentication: purging persistent token file...")
+                try:
+                    settings.gmail_token_path.unlink()
+                except Exception:
+                    pass
+
+            if args.human:
+                logger.info("Initializing Gmail Client Layer...")
+            gmail = GmailClient(settings_instance=settings)
+            gmail_emails = gmail.fetch_unread_messages(max_results=args.max, days=args.days)
+            process_account_emails(gmail_emails, gmail, engine, db, stats, run_results, args.human, settings_instance=settings)
+        except Exception as e:
+            if args.human:
+                logger.error("Error during Gmail pipeline run: %s", e)
+
+        # --- Ingest IMAP (Zoho) ---
+        try:
+            if args.human:
+                logger.info("Initializing IMAP Client Layer...")
+            imap = IMAPClient(settings_instance=settings)
+            imap_emails = imap.fetch_unread_headers(max_results=args.max, days=args.days)
+            process_account_emails(imap_emails, imap, engine, db, stats, run_results, args.human, settings_instance=settings)
+        except Exception as e:
+            if args.human:
+                logger.error("Error during IMAP pipeline run: %s", e)
 
     # --- Output Run Content ---
     # Apply Option 1: Priority Level Filtering

@@ -446,6 +446,74 @@ class EmailTriageEngine:
                 logger.error("Raw proxy server response body text was: \n%s", response.text)
             return 2, f"Escalation error: {e}", 1.0, "personal"
 
+    def _mark_account_read(
+        self, client: Any, account_label: str, provider: str,
+        level: Optional[int], message_id: Optional[str], all_emails: bool,
+    ) -> Dict[str, Any]:
+        """One account's worth of mark-emails-read: fetch its unread set, find
+        matches, mark them remotely, reflect successful marks in the local
+        cache immediately (so fetch_and_process_unread doesn't show stale
+        unread items until the next background sync tick reconciles them)."""
+        errors: List[str] = []
+        try:
+            unread = client.fetch_unread_messages() if provider == "gmail" else client.fetch_unread_headers()
+        except Exception as e:
+            logger.error("Failed to fetch %s unread messages during mark-read for %s: %s", provider, account_label, e)
+            errors.append(f"{provider} fetch error: {e}")
+            unread = []
+
+        matching_ids: List[str] = []
+        for e in unread:
+            mid = e["message_id"]
+            internal_id = e["id"]
+            if all_emails:
+                matching_ids.append(internal_id)
+            elif message_id and (mid == message_id or internal_id == message_id):
+                matching_ids.append(internal_id)
+            elif level is not None:
+                cached = self.db.get_cached_result(mid)
+                if cached and cached.get("triage_level") == level:
+                    matching_ids.append(internal_id)
+
+        marked: List[str] = []
+        if matching_ids:
+            try:
+                success = client.mark_as_read(matching_ids)
+                if success:
+                    marked = matching_ids
+                else:
+                    errors.append(f"Failed to execute {provider} mark-as-read")
+            except Exception as e:
+                errors.append(f"{provider} modify error: {e}")
+
+        if marked:
+            id_to_message_id = {e["id"]: e["message_id"] for e in unread}
+            for internal_id in marked:
+                mid = id_to_message_id.get(internal_id)
+                if mid:
+                    self.db.upsert_email_metadata(message_id=mid, account=account_label, is_unread=False)
+
+        return {"account": account_label, "provider": provider, "marked": len(marked), "ids": marked, "errors": errors}
+
+    def _resolve_mark_read_accounts(self) -> Optional[List[Any]]:
+        """None means no data/app.db user exists for this profile -- the caller
+        falls back to the original single-Gmail+single-IMAP construction."""
+        try:
+            import appdb
+            import users_store
+            import account_clients
+
+            if not appdb.DEFAULT_APP_DB_PATH.exists():
+                return None
+            with appdb.get_conn() as conn:
+                user_row = users_store.get_user_by_username(conn, self.settings.workspace_dir.name)
+                if user_row is None:
+                    return None
+                return account_clients.clients_for_user(conn, user_row["id"], self.settings, for_triage=True)
+        except Exception as e:
+            logger.error("Failed to resolve DB-backed integrations for mark-read: %s", e)
+            return None
+
     def mark_emails_read(
         self,
         level: Optional[int] = None,
@@ -457,97 +525,56 @@ class EmailTriageEngine:
         - all_emails=True: mark all unread emails read.
         - message_id: mark the specific message with this Message-ID/internal-ID read.
         - level: mark all unread emails with this cached triage level (0, 1, or 2) read.
+
+        Loops over however many Gmail/Zoho/IMAP accounts a data/app.db user has
+        connected; falls back to the original single-Gmail+single-IMAP pair when
+        no such user exists yet. gmail_marked_count/imap_marked_count/gmail_ids/
+        imap_uids are derived sums/lists (first gmail-family and first imap/zoho-
+        family account) kept for backward compatibility with existing callers.
         """
         from gmail_client import GmailClient
         from imap_client import IMAPClient
-        
-        gmail_marked = []
-        imap_marked = []
-        errors = []
 
-        # 1. Fetch unread emails from Gmail
-        try:
-            gmail = GmailClient(settings_instance=self.settings)
-            gmail_unread = gmail.fetch_unread_messages()
-        except Exception as e:
-            logger.error("Failed to fetch Gmail unread messages during mark-read: %s", e)
-            errors.append(f"Gmail fetch error: {e}")
-            gmail_unread = []
+        accounts_out: List[Dict[str, Any]] = []
+        db_accounts = self._resolve_mark_read_accounts()
 
-        # 2. Fetch unread emails from IMAP
-        try:
-            imap = IMAPClient(settings_instance=self.settings)
-            imap_unread = imap.fetch_unread_headers()
-        except Exception as e:
-            logger.error("Failed to fetch IMAP unread messages during mark-read: %s", e)
-            errors.append(f"IMAP fetch error: {e}")
-            imap_unread = []
-
-        # Helper to match emails by criteria
-        def get_matching_ids(emails: List[Dict[str, Any]]) -> List[str]:
-            matching_ids = []
-            for e in emails:
-                mid = e["message_id"]
-                internal_id = e["id"]
-
-                if all_emails:
-                    matching_ids.append(internal_id)
-                elif message_id and (mid == message_id or internal_id == message_id):
-                    matching_ids.append(internal_id)
-                elif level is not None:
-                    cached = self.db.get_cached_result(mid)
-                    if cached and cached.get("triage_level") == level:
-                        matching_ids.append(internal_id)
-            return matching_ids
-
-        # 3. Mark Gmail emails read
-        gmail_to_mark = get_matching_ids(gmail_unread)
-        if gmail_to_mark:
+        if db_accounts is not None:
+            for ac in db_accounts:
+                accounts_out.append(self._mark_account_read(ac.client, ac.account, ac.provider, level, message_id, all_emails))
+        else:
             try:
-                success = gmail.mark_as_read(gmail_to_mark)
-                if success:
-                    gmail_marked = gmail_to_mark
-                else:
-                    errors.append("Failed to execute Gmail batchModify")
+                gmail = GmailClient(settings_instance=self.settings)
+                accounts_out.append(
+                    self._mark_account_read(gmail, self.settings.gmail_account, "gmail", level, message_id, all_emails)
+                )
             except Exception as e:
-                errors.append(f"Gmail modify error: {e}")
+                logger.error("Failed to construct Gmail client during mark-read: %s", e)
+                accounts_out.append({
+                    "account": self.settings.gmail_account, "provider": "gmail", "marked": 0, "ids": [],
+                    "errors": [f"gmail fetch error: {e}"],
+                })
 
-        # 4. Mark IMAP emails read
-        imap_to_mark = get_matching_ids(imap_unread)
-        if imap_to_mark:
             try:
-                success = imap.mark_as_read(imap_to_mark)
-                if success:
-                    imap_marked = imap_to_mark
-                else:
-                    errors.append("Failed to execute IMAP flag command")
+                imap = IMAPClient(settings_instance=self.settings)
+                accounts_out.append(
+                    self._mark_account_read(imap, self.settings.imap_login, "imap", level, message_id, all_emails)
+                )
             except Exception as e:
-                errors.append(f"IMAP modify error: {e}")
+                logger.error("Failed to construct IMAP client during mark-read: %s", e)
+                accounts_out.append({
+                    "account": self.settings.imap_login, "provider": "imap", "marked": 0, "ids": [],
+                    "errors": [f"imap fetch error: {e}"],
+                })
 
-        # 5. Reflect successful remote marks in the local cache immediately, so
-        # fetch_and_process_unread (cache-only) doesn't show stale unread items
-        # until the next background sync tick reconciles them.
-        if gmail_marked:
-            id_to_message_id = {e["id"]: e["message_id"] for e in gmail_unread}
-            for internal_id in gmail_marked:
-                mid = id_to_message_id.get(internal_id)
-                if mid:
-                    self.db.upsert_email_metadata(
-                        message_id=mid, account=self.settings.gmail_account, is_unread=False
-                    )
-        if imap_marked:
-            id_to_message_id = {e["id"]: e["message_id"] for e in imap_unread}
-            for internal_id in imap_marked:
-                mid = id_to_message_id.get(internal_id)
-                if mid:
-                    self.db.upsert_email_metadata(
-                        message_id=mid, account=self.settings.imap_login, is_unread=False
-                    )
+        gmail_result = next((a for a in accounts_out if a["provider"] == "gmail"), None)
+        imap_result = next((a for a in accounts_out if a["provider"] in ("imap", "zoho")), None)
+        errors = [err for a in accounts_out for err in a["errors"]]
 
         return {
-            "gmail_marked_count": len(gmail_marked),
-            "imap_marked_count": len(imap_marked),
-            "gmail_ids": gmail_marked,
-            "imap_uids": imap_marked,
-            "errors": errors
+            "gmail_marked_count": gmail_result["marked"] if gmail_result else 0,
+            "imap_marked_count": imap_result["marked"] if imap_result else 0,
+            "gmail_ids": gmail_result["ids"] if gmail_result else [],
+            "imap_uids": imap_result["ids"] if imap_result else [],
+            "accounts": accounts_out,
+            "errors": errors,
         }

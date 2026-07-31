@@ -609,3 +609,23 @@ class TestEmailDBSyncSummary:
         summary = {"downloaded": 5, "triaged": 2, "errors": [], "last_download_at": "2026-07-23T00:00:00+00:00"}
         db.save_sync_summary("acct@test.com", summary)
         assert db.get_sync_summary("acct@test.com") == summary
+
+
+class TestEmailDBBackfillIntegration:
+    def test_stamps_integration_id_and_provider_on_matching_rows(self, db):
+        db.upsert_email_metadata(message_id="<a>", account="acct@test.com", sender="s", subject="subj")
+        db.upsert_email_metadata(message_id="<b>", account="acct@test.com", sender="s", subject="subj")
+        db.upsert_email_metadata(message_id="<c>", account="other@test.com", sender="s", subject="subj")
+
+        updated = db.backfill_integration("acct@test.com", integration_id=7, provider="gmail")
+
+        assert updated == 2
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT integration_id, provider FROM email_cache WHERE message_id = '<a>'")
+            assert cursor.fetchone() == (7, "gmail")
+            cursor.execute("SELECT integration_id, provider FROM email_cache WHERE message_id = '<c>'")
+            assert cursor.fetchone() == (None, None)
+
+    def test_no_matching_rows_returns_zero(self, db):
+        assert db.backfill_integration("nobody@test.com", integration_id=1, provider="imap") == 0

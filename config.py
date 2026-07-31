@@ -7,6 +7,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
+# Shared placeholder sentinels for "this account was never configured" -- used
+# by mcp_server.py's dashboard skip-logic and by account_clients.py's legacy
+# (pre-migration) single-account fallback to decide whether a profile is real.
+PLACEHOLDER_GMAIL_ACCOUNT = "your_email@gmail.com"
+PLACEHOLDER_IMAP_LOGIN = "your_email@domain.com"
+
 
 def parse_duration(value, default_seconds: float = 900.0) -> float:
     """Parses a duration expressed as seconds (int/float) or a suffixed string like '15m'/'1h'/'45s'/'1d'."""
@@ -340,47 +346,171 @@ class Settings(BaseSettings):
                 pass
 
     @classmethod
-    def load_for_profile(cls, profile_name: str = "default") -> "Settings":
+    def _load_for_profile_legacy(cls, profile_name: str = "default") -> "Settings":
+        """The original filesystem-only resolution (profile name == directory name).
+
+        Kept verbatim as a fallback for profiles that haven't been migrated into
+        data/app.db yet -- see load_for_user for the DB-aware entry point.
+        """
         workspace_root = Path(__file__).parent.resolve()
-        
+
         if not profile_name:
             profile_name = "default"
-            
+
         profile_dir = workspace_root / "profiles" / profile_name
         profile_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Determine env file priority (profile env overrides root env)
         profile_env = profile_dir / ".env"
         env_file = profile_env if profile_env.exists() else workspace_root / ".env"
-        
+
         s = cls(_env_file=env_file)
         s.workspace_dir = profile_dir
         s.gmail_token_path = profile_dir / "token.json"
-        
+
         # Load global config first (inheritance base)
         s.load_from_yaml(workspace_root / "data" / "config.yml", env_file=env_file)
-        
+
         # Overwrite with global local config if it exists
         global_local_yaml = workspace_root / "profiles" / "config-local.yml"
         if global_local_yaml.exists():
             s.load_from_yaml(global_local_yaml, env_file=env_file)
-        
+
         # Overwrite with profile-specific config if it exists
         profile_yaml = profile_dir / "config.yml"
         if profile_yaml.exists():
             s.load_from_yaml(profile_yaml, env_file=env_file)
-            
+
         # Overwrite with profile-specific local config if it exists
         profile_local_yaml = profile_dir / "config-local.yml"
         if profile_local_yaml.exists():
             s.load_from_yaml(profile_local_yaml, env_file=env_file)
-            
+
         # Resolve relative credentials path to the profile directory if it exists there
         if s.gmail_credentials_path and not s.gmail_credentials_path.is_absolute():
             if (profile_dir / s.gmail_credentials_path).exists():
                 s.gmail_credentials_path = profile_dir / s.gmail_credentials_path
-            
+
         return s
+
+    @classmethod
+    def _load_for_user_row(cls, conn, user_row) -> "Settings":
+        """Build Settings for a resolved data/app.db users row: same .env/YAML
+        cascade as the legacy per-profile path (workspace_dir keyed by the
+        user's immutable workspace_slug instead of a raw profile name), plus a
+        final DB overlay (app_settings, then this user's user_settings) that
+        wins over both YAML and env vars."""
+        workspace_root = Path(__file__).parent.resolve()
+        profile_dir = workspace_root / "profiles" / user_row["workspace_slug"]
+        profile_dir.mkdir(parents=True, exist_ok=True)
+
+        profile_env = profile_dir / ".env"
+        env_file = profile_env if profile_env.exists() else workspace_root / ".env"
+
+        s = cls(_env_file=env_file)
+        s.workspace_dir = profile_dir
+        s.gmail_token_path = profile_dir / "token.json"
+
+        s.load_from_yaml(workspace_root / "data" / "config.yml", env_file=env_file)
+        global_local_yaml = workspace_root / "profiles" / "config-local.yml"
+        if global_local_yaml.exists():
+            s.load_from_yaml(global_local_yaml, env_file=env_file)
+        profile_yaml = profile_dir / "config.yml"
+        if profile_yaml.exists():
+            s.load_from_yaml(profile_yaml, env_file=env_file)
+        profile_local_yaml = profile_dir / "config-local.yml"
+        if profile_local_yaml.exists():
+            s.load_from_yaml(profile_local_yaml, env_file=env_file)
+
+        if s.gmail_credentials_path and not s.gmail_credentials_path.is_absolute():
+            if (profile_dir / s.gmail_credentials_path).exists():
+                s.gmail_credentials_path = profile_dir / s.gmail_credentials_path
+
+        try:
+            import app_settings_store
+            app_settings_store.apply_to_settings(conn, s, user_id=user_row["id"])
+        except Exception:
+            pass
+
+        return s
+
+    @classmethod
+    def _load_global(cls, conn=None) -> "Settings":
+        """No-tenant view: env + data/config.yml + the global local override,
+        then the global app_settings overlay. No filesystem side effect (no
+        profile directory is created) -- used by the scheduler's process-wide
+        reads and the module-level singleton."""
+        workspace_root = Path(__file__).parent.resolve()
+        env_file = workspace_root / ".env"
+
+        s = cls(_env_file=env_file)
+        s.workspace_dir = workspace_root
+        s.load_from_yaml(workspace_root / "data" / "config.yml", env_file=env_file)
+        global_local_yaml = workspace_root / "profiles" / "config-local.yml"
+        if global_local_yaml.exists():
+            s.load_from_yaml(global_local_yaml, env_file=env_file)
+
+        owns_conn = False
+        try:
+            if conn is None:
+                import appdb
+                if appdb.DEFAULT_APP_DB_PATH.exists():
+                    conn = appdb.connect()
+                    owns_conn = True
+            if conn is not None:
+                import app_settings_store
+                app_settings_store.apply_to_settings(conn, s, user_id=None)
+        except Exception:
+            pass
+        finally:
+            if owns_conn and conn is not None:
+                conn.close()
+
+        return s
+
+    @classmethod
+    def load_for_user(cls, user: "int | str | None" = None, *, conn=None) -> "Settings":
+        """Resolve settings for a user (by data/app.db id, or username, or
+        None for the global/no-tenant view).
+
+        DB-backed users take the new path (workspace keyed by workspace_slug,
+        DB settings overlay). A string that doesn't resolve to any DB user
+        falls back to the legacy filesystem-only profile resolution, so
+        pre-migration profile directories (and every caller still spelling
+        `load_for_profile("jenny")`) keep working with zero changes until
+        migrate_to_db.py has run.
+        """
+        if user is None:
+            return cls._load_global(conn)
+
+        resolved_conn = conn
+        owns_conn = False
+        user_row = None
+        try:
+            if resolved_conn is None:
+                import appdb
+                if appdb.DEFAULT_APP_DB_PATH.exists():
+                    resolved_conn = appdb.connect()
+                    owns_conn = True
+            if resolved_conn is not None:
+                import users_store
+                user_row = users_store.resolve_user(resolved_conn, user)
+        except Exception:
+            user_row = None
+
+        try:
+            if user_row is not None:
+                return cls._load_for_user_row(resolved_conn, user_row)
+            return cls._load_for_profile_legacy(str(user))
+        finally:
+            if owns_conn and resolved_conn is not None:
+                resolved_conn.close()
+
+    @classmethod
+    def load_for_profile(cls, profile_name: str = "default") -> "Settings":
+        """Deprecated alias for load_for_user -- kept for auto_rater_*.py,
+        classifier_tester.py, and any other caller still spelling this name."""
+        return cls.load_for_user(profile_name)
 
 settings = Settings.load_for_profile("default")
 

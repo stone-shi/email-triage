@@ -2,17 +2,44 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from imap_tools import MailBox, AND, H
 from config import settings
+from mail_auth import MailAuth, PasswordMailAuth, PasswordSmtpAuth, SmtpAuth
 
 logger = logging.getLogger("email_triage.imap")
 
 class IMAPClient:
-    def __init__(self, settings_instance: Optional[Any] = None) -> None:
+    def __init__(
+        self,
+        settings_instance: Optional[Any] = None,
+        *,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        login: Optional[str] = None,
+        mail_auth: Optional[MailAuth] = None,
+        smtp_host: Optional[str] = None,
+        smtp_port: Optional[int] = None,
+        smtp_login: Optional[str] = None,
+        smtp_auth: Optional[SmtpAuth] = None,
+    ) -> None:
         self.settings = settings_instance if settings_instance else settings
-        # Bind directly to flat config keys
-        self.host = self.settings.imap_host
-        self.port = self.settings.imap_port
-        self.login_user = self.settings.imap_login
-        self.password = self.settings.imap_password
+        # Bind to explicit overrides when given (multi-account path), else the
+        # flat config keys (unchanged default behavior).
+        self.host = host or self.settings.imap_host
+        self.port = port or self.settings.imap_port
+        self.login_user = login or self.settings.imap_login
+        self.password = self.settings.imap_password  # kept for readability/back-compat; mail_auth is authoritative
+        self.mail_auth: MailAuth = mail_auth or PasswordMailAuth(self.settings.imap_password)
+
+        self.smtp_host = smtp_host or self.settings.smtp_host
+        self.smtp_port = smtp_port or self.settings.smtp_port
+        self.smtp_login_user = smtp_login or self.settings.active_smtp_login
+        self.smtp_auth: SmtpAuth = smtp_auth or PasswordSmtpAuth(self.settings.active_smtp_password)
+
+    def _mailbox(self) -> MailBox:
+        """Every read/write IMAP call site connects through here instead of
+        calling MailBox(...).login(...) directly, so password-based and
+        XOAUTH2-based (Zoho OAuth) accounts share one code path."""
+        box = MailBox(self.host, port=self.port)
+        return self.mail_auth.attach(box, self.login_user)
 
     def fetch_unread_headers(
         self,
@@ -26,7 +53,7 @@ class IMAPClient:
         results: List[Dict[str, Any]] = []
         try:
             logger.info("Connecting to IMAP server %s:%d...", self.host, self.port)
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 logger.info("Successfully logged into IMAP account. Scanning UNSEEN messages...")
                 
                 from datetime import date, timedelta
@@ -75,7 +102,7 @@ class IMAPClient:
         results: List[Dict[str, Any]] = []
         try:
             logger.info("Connecting to IMAP server %s:%d for full mailbox listing...", self.host, self.port)
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 logger.info("Successfully logged into IMAP account. Scanning ALL messages...")
                 messages = mailbox.fetch(AND(all=True), headers_only=True, mark_seen=False, limit=max_results)
 
@@ -106,7 +133,7 @@ class IMAPClient:
         """Fetch full body if email passes triage."""
         try:
             logger.info("Escalating: Fetching full IMAP email payload for UID %s", uid)
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 for msg in mailbox.fetch(AND(uid=uid), mark_seen=False):
                     if msg.text:
                         return msg.text
@@ -133,7 +160,7 @@ class IMAPClient:
                 "Connecting to IMAP server %s:%d to batch-fetch %d full bodies...",
                 self.host, self.port, len(uids),
             )
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 for i in range(0, len(uids), chunk_size):
                     chunk = uids[i:i + chunk_size]
                     try:
@@ -152,7 +179,7 @@ class IMAPClient:
             return False
         try:
             logger.info("Marking %d IMAP messages as read...", len(uids))
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 mailbox.flag(uids, '\\Seen', True)
             return True
         except Exception as e:
@@ -166,7 +193,7 @@ class IMAPClient:
         results: List[Dict[str, Any]] = []
         try:
             logger.info("Connecting to IMAP server %s:%d for search...", self.host, self.port)
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 logger.info("Searching IMAP messages for query: '%s'", query)
                 messages = mailbox.fetch(AND(text=query), headers_only=True, mark_seen=False)
                 
@@ -200,7 +227,7 @@ class IMAPClient:
         """
         try:
             logger.info("Connecting to IMAP server %s:%d to find message %s...", self.host, self.port, message_id_or_uid)
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 # 1. Try treating message_id_or_uid as UID first
                 if message_id_or_uid.isdigit():
                     messages = list(mailbox.fetch(AND(uid=message_id_or_uid), headers_only=True, mark_seen=False))
@@ -267,7 +294,7 @@ class IMAPClient:
                 mime_msg["References"] = references
 
             logger.info("Connecting to IMAP server %s:%d to create draft...", self.host, self.port)
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 folders = [f.name for f in mailbox.folder.list()]
                 drafts_folder = 'Drafts'
                 for f in folders:
@@ -363,15 +390,14 @@ class IMAPClient:
             mime_msg["References"] = references
 
         # 1. Send via SMTP
-        host = self.settings.smtp_host
-        port = self.settings.smtp_port
-        login = self.settings.active_smtp_login
-        password = self.settings.active_smtp_password
-        
+        host = self.smtp_host
+        port = self.smtp_port
+        login = self.smtp_login_user
+
         logger.info("Connecting to SMTP server %s:%d to send reply...", host, port)
         if port == 465:
             with smtplib.SMTP_SSL(host, port, timeout=30.0) as server:
-                server.login(login, password)
+                self.smtp_auth.authenticate(server, login)
                 server.send_message(mime_msg)
         else:
             with smtplib.SMTP(host, port, timeout=30.0) as server:
@@ -381,7 +407,7 @@ class IMAPClient:
                     server.ehlo()
                 except Exception as tls_err:
                     logger.warning("STARTTLS failed: %s", tls_err)
-                server.login(login, password)
+                self.smtp_auth.authenticate(server, login)
                 server.send_message(mime_msg)
         
         logger.info("Successfully sent reply via SMTP.")
@@ -389,7 +415,7 @@ class IMAPClient:
         # 2. Append copy to Sent folder
         try:
             logger.info("Connecting to IMAP server %s:%d to save copy of sent mail...", self.host, self.port)
-            with MailBox(self.host, port=self.port).login(self.login_user, self.password) as mailbox:
+            with self._mailbox() as mailbox:
                 folders = [f.name for f in mailbox.folder.list()]
                 sent_folder = 'Sent'
                 for f in folders:

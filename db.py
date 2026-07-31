@@ -124,8 +124,22 @@ class EmailDB:
                     cursor.execute("ALTER TABLE email_cache ADD COLUMN display_count INTEGER")
                 except Exception:
                     pass
+                # Populated going forward (and backfilled by migrate_to_db.py) once a message's
+                # account maps to a data/app.db integrations row. `account` stays the primary
+                # query key for every existing query -- these are additive, not a replacement.
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN integration_id INTEGER")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE email_cache ADD COLUMN provider TEXT")
+                except Exception:
+                    pass
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_email_cache_is_unread ON email_cache(is_unread, account)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_email_cache_integration ON email_cache(integration_id, is_unread)"
                 )
                 # Create basic metrics/tokens log table
                 cursor.execute("""
@@ -431,7 +445,7 @@ class EmailDB:
             logger.error("Failed to get email counts for %s: %s", account or "all accounts", e)
             return counts
 
-    def get_daily_token_stats(self, days: int = 14) -> list:
+    def get_daily_token_stats(self, days: int = 30) -> list:
         """
         Per-day input/output token usage for the last `days` days (summed from Level 1 + Level 2
         prompt/completion tokens actually spent), plus an estimate of tokens saved by the TEI/
@@ -583,6 +597,24 @@ class EmailDB:
             logger.debug("Saved triage results for Message-ID: %s", message_id)
         except Exception as e:
             logger.error("Failed to save triage result for %s: %s", message_id, e, exc_info=True)
+
+    def backfill_integration(self, account: str, integration_id: int, provider: str) -> int:
+        """Stamps integration_id/provider onto every existing row for `account` --
+        used once by migrate_to_db.py per newly-created integration, so a
+        1M-row cache doesn't have to be re-triaged to gain the new columns.
+        Returns the number of rows updated."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE email_cache SET integration_id = ?, provider = ? WHERE account = ?",
+                    (integration_id, provider, account),
+                )
+                conn.commit()
+                return cursor.rowcount
+        except Exception as e:
+            logger.error("Failed to backfill integration_id for account %s: %s", account, e, exc_info=True)
+            return 0
 
     def log_token_usage(self, event: str, model: str, tokens_used: int) -> None:
         """Log token consumption statistics for cloud LLM audit trail."""

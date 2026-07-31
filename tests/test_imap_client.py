@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import imap_client
 from imap_client import IMAPClient
+from mail_auth import PasswordMailAuth
 
 
 def make_client():
@@ -17,6 +18,7 @@ def make_client():
     client.port = 993
     client.login_user = "user@test.com"
     client.password = "secret"
+    client.mail_auth = PasswordMailAuth("secret")
     return client
 
 

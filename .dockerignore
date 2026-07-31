@@ -13,3 +13,6 @@ auto_rater_data/
 *.db
 token.json
 credentials.json
+secret.key
+web/node_modules/
+web/dist/

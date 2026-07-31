@@ -170,3 +170,9 @@ credentials.json
 config-local.yml
 version.txt
 test-reports/
+app.db
+secret.key
+
+# Frontend (web/) -- dist/ is already covered by the generic "dist/" rule above
+web/node_modules/
+*.tsbuildinfo

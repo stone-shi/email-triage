@@ -64,6 +64,15 @@ from triage import EmailTriageEngine
 from gmail_client import GmailClient
 from imap_client import IMAPClient
 from config import settings, list_profile_names
+import account_clients
+import appdb
+import integrations_store as ints
+import mcp_tokens_store
+import users_store
+import web_api
+import web_integrations_api
+import web_static
+from web_auth import CurrentIdentity, error_response, requires_active_user, requires_admin
 
 # Initialize FastMCP server
 from mcp.server.transport_security import TransportSecuritySettings
@@ -105,9 +114,16 @@ mcp = RobustFastMCP(
     warn_on_duplicate_tools=False
 )
 
+# New auth/user-management/settings dashboard routes (login, users, MCP tokens,
+# global settings). The pre-existing dashboard status/sync/logs routes further
+# down in this file are registered separately and are not yet gated by these --
+# see mcp_server.py's module docstring / CLAUDE.md for the cutover plan.
+web_api.register_web_routes(mcp)
+web_integrations_api.register_integrations_routes(mcp)
+
 import contextvars
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, StreamingResponse
+from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse, StreamingResponse, RedirectResponse, Response
 from starlette.requests import Request
 
 # ContextVar to store the authenticated profile name for the current request
@@ -197,8 +213,91 @@ class MCPTokenAuthMiddleware:
                     return
                 finally:
                     current_profile.reset(token_t)
-        
+
         await self.app(scope, receive, send)
+
+
+class AppAuthMiddleware:
+    """Guards /sse and /messages/ (the MCP protocol endpoints). Resolves a
+    per-user DB-backed mcp_tokens row first; if data/app.db doesn't exist yet
+    or the token isn't found there, falls back to the legacy .env-scraped
+    EMAIL_TRIAGE_PROFILE_TOKEN map (same lookup MCPTokenAuthMiddleware used)
+    so existing MCP clients keep working unmodified until migrate_to_db.py has
+    imported their tokens into the database.
+
+    Also guards /messages/, which the middleware it replaces did not: tool
+    calls execute inside the GET /sse request's task (that's where
+    RobustFastMCP awaits the session), so the current_profile contextvar set
+    there was already visible to a tool call -- but a POST to /messages/ was
+    reaching the server with no auth check of its own, protected only by the
+    session_id being hard to guess.
+    """
+
+    def __init__(self, app, token_map: Dict[str, str]):
+        self.app = app
+        self.token_map = token_map
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            from starlette.datastructures import Headers, QueryParams
+
+            headers = Headers(scope=scope)
+            path = scope.get("path", "")
+
+            if path.startswith("/sse") or path.startswith("/messages"):
+                token = None
+                auth_header = headers.get("authorization")
+                if auth_header and auth_header.lower().startswith("bearer "):
+                    token = auth_header[7:].strip()
+                if not token:
+                    token = headers.get("x-profile-token")
+                if not token:
+                    query_params = QueryParams(scope.get("query_string", b"").decode("utf-8"))
+                    token = query_params.get("token")
+
+                profile = self._resolve_profile(token)
+                if profile is None:
+                    body = b'{"error":{"code":"auth_required","message":"Invalid or missing MCP token"}}'
+                    await send({
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode("utf-8")),
+                        ],
+                    })
+                    await send({"type": "http.response.body", "body": body, "more_body": False})
+                    return
+
+                token_t = current_profile.set(profile)
+                try:
+                    await self.app(scope, receive, send)
+                    return
+                finally:
+                    current_profile.reset(token_t)
+
+        await self.app(scope, receive, send)
+
+    def _resolve_profile(self, token: Optional[str]) -> Optional[str]:
+        if not token:
+            return None
+        try:
+            if appdb.DEFAULT_APP_DB_PATH.exists():
+                with appdb.get_conn() as conn:
+                    row = mcp_tokens_store.resolve_token(conn, token)
+                    if row is not None:
+                        mcp_tokens_store.touch_last_used(conn, row["id"])
+                        user = users_store.get_user(conn, row["user_id"])
+                        if user is not None and user["is_active"]:
+                            return user["username"]
+        except Exception:
+            logger.exception("DB-backed MCP token lookup failed; falling back to .env token map")
+
+        # Legacy fallback: reload the .env-scraped token map fresh each time,
+        # exactly as the middleware it replaces did.
+        self.token_map = load_token_profile_map()
+        return self.token_map.get(token)
+
 
 # Lazy initializers to ensure files are resolved within their active contexts
 def get_resources(profile_name: str = "default"):
@@ -538,17 +637,51 @@ def sync_account(
     return summary
 
 
-_PLACEHOLDER_GMAIL_ACCOUNT = "your_email@gmail.com"
-_PLACEHOLDER_IMAP_LOGIN = "your_email@domain.com"
+from config import PLACEHOLDER_GMAIL_ACCOUNT as _PLACEHOLDER_GMAIL_ACCOUNT
+from config import PLACEHOLDER_IMAP_LOGIN as _PLACEHOLDER_IMAP_LOGIN
+
+
+def _db_integration_accounts(
+    profile: str, profile_settings: Any, *, for_triage: bool = False, for_archive: bool = False
+) -> Optional[List["account_clients.AccountClient"]]:
+    """None means "no data/app.db user exists for this profile -- use the
+    original single-Gmail+single-IMAP construction below, unchanged" (this is
+    the case for every profile until migrate_to_db.py has run). A (possibly
+    empty) list means a real user row exists and account_clients owns
+    resolving their accounts, including its own legacy-settings fallback if
+    they happen to have zero integrations rows."""
+    if not appdb.DEFAULT_APP_DB_PATH.exists():
+        return None
+    try:
+        with appdb.get_conn() as conn:
+            user_row = users_store.get_user_by_username(conn, profile)
+            if user_row is None:
+                return None
+            return account_clients.clients_for_user(
+                conn, user_row["id"], profile_settings, for_triage=for_triage, for_archive=for_archive
+            )
+    except Exception:
+        logger.exception(
+            "Failed to resolve DB-backed integrations for profile %s; falling back to the legacy path", profile
+        )
+        return None
 
 
 def sync_profile(profile: str) -> Dict[str, Any]:
     """
-    Runs sync_account for both Gmail and IMAP under one profile, guarded by a per-profile lock.
-    Each side is skipped (not attempted at all) if its identity is still at the uninitialized
-    placeholder default -- notably, `list_profile_names()` always includes "default", so an
-    unconfigured "default" profile directory would otherwise be synced (and fail loudly with
-    auth errors) on every scheduler tick even though no one asked for it to exist.
+    Runs sync_account for every one of a profile's accounts, guarded by a per-profile lock.
+
+    Two resolution paths coexist: a profile with a data/app.db user (see
+    _db_integration_accounts) loops sync_account over however many
+    Gmail/Zoho/IMAP integrations that user has connected; a profile with no
+    such user (every profile until migrate_to_db.py has run) falls back to
+    exactly the original single-Gmail+single-IMAP construction. Each side of
+    the legacy path is skipped (not attempted at all) if its identity is
+    still at the uninitialized placeholder default -- notably,
+    `list_profile_names()` always includes "default", so an unconfigured
+    "default" profile directory would otherwise be synced (and fail loudly
+    with auth errors) on every scheduler tick even though no one asked for it
+    to exist.
     """
     lock = _get_profile_lock(profile)
     if not lock.acquire(blocking=False):
@@ -558,35 +691,60 @@ def sync_profile(profile: str) -> Dict[str, Any]:
         db, engine, profile_settings = get_resources(profile)
         result: Dict[str, Any] = {"profile": profile, "status": "ok"}
 
-        if not stop_event.is_set():
-            if profile_settings.gmail_account == _PLACEHOLDER_GMAIL_ACCOUNT:
-                result["gmail"] = {"status": "skipped", "reason": "gmail_account not configured"}
-            else:
+        db_accounts = _db_integration_accounts(profile, profile_settings, for_triage=True)
+        if db_accounts is not None:
+            result["accounts"] = {}
+            for ac in db_accounts:
+                if stop_event.is_set():
+                    break
                 try:
-                    gmail = GmailClient(settings_instance=profile_settings)
-                    result["gmail"] = sync_account(
-                        db, engine, profile_settings, gmail, profile_settings.gmail_account,
+                    summary = sync_account(
+                        db, engine, profile_settings, ac.client, ac.account,
                         profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
                         stop_event=stop_event,
                     )
                 except Exception as e:
-                    logger.error("Gmail sync failed for profile %s: %s", profile, e, exc_info=True)
-                    result["gmail"] = {"errors": [str(e)]}
+                    logger.error("Sync failed for %s account %s: %s", profile, ac.account, e, exc_info=True)
+                    summary = {"errors": [str(e)]}
+                result["accounts"][ac.account] = summary
+                # Backward-compat keys for the pre-SPA dashboard, which only knows how to
+                # render one gmail card and one imap/zoho card per profile.
+                if ac.provider == "gmail" and "gmail" not in result:
+                    result["gmail"] = summary
+                elif ac.provider in ("imap", "zoho") and "imap" not in result:
+                    result["imap"] = summary
+            result.setdefault("gmail", {"status": "skipped", "reason": "gmail_account not configured"})
+            result.setdefault("imap", {"status": "skipped", "reason": "imap_login not configured"})
+        else:
+            if not stop_event.is_set():
+                if profile_settings.gmail_account == _PLACEHOLDER_GMAIL_ACCOUNT:
+                    result["gmail"] = {"status": "skipped", "reason": "gmail_account not configured"}
+                else:
+                    try:
+                        gmail = GmailClient(settings_instance=profile_settings)
+                        result["gmail"] = sync_account(
+                            db, engine, profile_settings, gmail, profile_settings.gmail_account,
+                            profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
+                            stop_event=stop_event,
+                        )
+                    except Exception as e:
+                        logger.error("Gmail sync failed for profile %s: %s", profile, e, exc_info=True)
+                        result["gmail"] = {"errors": [str(e)]}
 
-        if not stop_event.is_set():
-            if profile_settings.imap_login == _PLACEHOLDER_IMAP_LOGIN:
-                result["imap"] = {"status": "skipped", "reason": "imap_login not configured"}
-            else:
-                try:
-                    imap = IMAPClient(settings_instance=profile_settings)
-                    result["imap"] = sync_account(
-                        db, engine, profile_settings, imap, profile_settings.imap_login,
-                        profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
-                        stop_event=stop_event,
-                    )
-                except Exception as e:
-                    logger.error("IMAP sync failed for profile %s: %s", profile, e, exc_info=True)
-                    result["imap"] = {"errors": [str(e)]}
+            if not stop_event.is_set():
+                if profile_settings.imap_login == _PLACEHOLDER_IMAP_LOGIN:
+                    result["imap"] = {"status": "skipped", "reason": "imap_login not configured"}
+                else:
+                    try:
+                        imap = IMAPClient(settings_instance=profile_settings)
+                        result["imap"] = sync_account(
+                            db, engine, profile_settings, imap, profile_settings.imap_login,
+                            profile_settings.scheduler.max_per_account, profile_settings.scheduler.days,
+                            stop_event=stop_event,
+                        )
+                    except Exception as e:
+                        logger.error("IMAP sync failed for profile %s: %s", profile, e, exc_info=True)
+                        result["imap"] = {"errors": [str(e)]}
 
         if stop_event.is_set():
             result["status"] = "stopped"
@@ -700,8 +858,9 @@ def full_download_account(db: EmailDB, client: Any, account_label: str, stop_eve
 
 
 def full_download_profile(profile: str) -> Dict[str, Any]:
-    """Runs full_download_account for both Gmail and IMAP under one profile, guarded by the same
-    per-profile lock/stop-event as sync_profile."""
+    """Runs full_download_account for every one of a profile's accounts, guarded by the same
+    per-profile lock/stop-event as sync_profile. Same DB-vs-legacy resolution as sync_profile --
+    see _db_integration_accounts."""
     lock = _get_profile_lock(profile)
     if not lock.acquire(blocking=False):
         return {"profile": profile, "status": "skipped", "reason": "sync already in progress"}
@@ -710,27 +869,46 @@ def full_download_profile(profile: str) -> Dict[str, Any]:
         db, _, profile_settings = get_resources(profile)
         result: Dict[str, Any] = {"profile": profile, "status": "ok"}
 
-        if not stop_event.is_set():
-            if profile_settings.gmail_account == _PLACEHOLDER_GMAIL_ACCOUNT:
-                result["gmail"] = {"status": "skipped", "reason": "gmail_account not configured"}
-            else:
+        db_accounts = _db_integration_accounts(profile, profile_settings, for_archive=True)
+        if db_accounts is not None:
+            result["accounts"] = {}
+            for ac in db_accounts:
+                if stop_event.is_set():
+                    break
                 try:
-                    gmail = GmailClient(settings_instance=profile_settings)
-                    result["gmail"] = full_download_account(db, gmail, profile_settings.gmail_account, stop_event=stop_event)
+                    summary = full_download_account(db, ac.client, ac.account, stop_event=stop_event)
                 except Exception as e:
-                    logger.error("Gmail full download failed for profile %s: %s", profile, e, exc_info=True)
-                    result["gmail"] = {"errors": [str(e)]}
+                    logger.error("Full download failed for %s account %s: %s", profile, ac.account, e, exc_info=True)
+                    summary = {"errors": [str(e)]}
+                result["accounts"][ac.account] = summary
+                if ac.provider == "gmail" and "gmail" not in result:
+                    result["gmail"] = summary
+                elif ac.provider in ("imap", "zoho") and "imap" not in result:
+                    result["imap"] = summary
+            result.setdefault("gmail", {"status": "skipped", "reason": "gmail_account not configured"})
+            result.setdefault("imap", {"status": "skipped", "reason": "imap_login not configured"})
+        else:
+            if not stop_event.is_set():
+                if profile_settings.gmail_account == _PLACEHOLDER_GMAIL_ACCOUNT:
+                    result["gmail"] = {"status": "skipped", "reason": "gmail_account not configured"}
+                else:
+                    try:
+                        gmail = GmailClient(settings_instance=profile_settings)
+                        result["gmail"] = full_download_account(db, gmail, profile_settings.gmail_account, stop_event=stop_event)
+                    except Exception as e:
+                        logger.error("Gmail full download failed for profile %s: %s", profile, e, exc_info=True)
+                        result["gmail"] = {"errors": [str(e)]}
 
-        if not stop_event.is_set():
-            if profile_settings.imap_login == _PLACEHOLDER_IMAP_LOGIN:
-                result["imap"] = {"status": "skipped", "reason": "imap_login not configured"}
-            else:
-                try:
-                    imap = IMAPClient(settings_instance=profile_settings)
-                    result["imap"] = full_download_account(db, imap, profile_settings.imap_login, stop_event=stop_event)
-                except Exception as e:
-                    logger.error("IMAP full download failed for profile %s: %s", profile, e, exc_info=True)
-                    result["imap"] = {"errors": [str(e)]}
+            if not stop_event.is_set():
+                if profile_settings.imap_login == _PLACEHOLDER_IMAP_LOGIN:
+                    result["imap"] = {"status": "skipped", "reason": "imap_login not configured"}
+                else:
+                    try:
+                        imap = IMAPClient(settings_instance=profile_settings)
+                        result["imap"] = full_download_account(db, imap, profile_settings.imap_login, stop_event=stop_event)
+                    except Exception as e:
+                        logger.error("IMAP full download failed for profile %s: %s", profile, e, exc_info=True)
+                        result["imap"] = {"errors": [str(e)]}
 
         if stop_event.is_set():
             result["status"] = "stopped"
@@ -762,31 +940,74 @@ def _is_configured(profile_settings: Any) -> bool:
     )
 
 
+def _resolve_account_metadata(profile: str) -> Optional[List[Dict[str, Any]]]:
+    """Cheap (no live client construction) counterpart to _db_integration_accounts,
+    for status display. None means no data/app.db user exists for this profile --
+    the caller should fall back to the legacy single-Gmail+single-IMAP display."""
+    if not appdb.DEFAULT_APP_DB_PATH.exists():
+        return None
+    try:
+        with appdb.get_conn() as conn:
+            user_row = users_store.get_user_by_username(conn, profile)
+            if user_row is None:
+                return None
+            rows = ints.list_integrations(conn, user_row["id"], enabled_only=True)
+            return [
+                {
+                    "integration_id": r["id"], "provider": r["provider"], "account": r["cache_account_key"],
+                    "label": r["account_label"] or r["cache_account_key"],
+                }
+                for r in rows
+            ]
+    except Exception:
+        logger.exception("Failed to read integrations metadata for profile %s status", profile)
+        return None
+
+
 def _profile_status(name: str) -> Dict[str, Any]:
     """Current sync status + last-download summary + cached counts for one profile's accounts."""
     db, _, profile_settings = get_resources(name)
-    return {
+
+    def _account_entry(account: str) -> Dict[str, Any]:
+        return {
+            "account": account,
+            "summary": db.get_sync_summary(account),
+            "counts": db.get_email_counts(account),
+            "progress": _get_progress(account),
+            "full_download_summary": db.get_sync_summary(_full_download_summary_key(account)),
+            "full_download_progress": _get_full_download_progress(account),
+        }
+
+    status: Dict[str, Any] = {
         "profile": name,
         "configured": _is_configured(profile_settings),
         "running": _get_profile_lock(name).locked(),
         "stop_requested": _get_stop_event(name).is_set(),
-        "gmail": {
-            "account": profile_settings.gmail_account,
-            "summary": db.get_sync_summary(profile_settings.gmail_account),
-            "counts": db.get_email_counts(profile_settings.gmail_account),
-            "progress": _get_progress(profile_settings.gmail_account),
-            "full_download_summary": db.get_sync_summary(_full_download_summary_key(profile_settings.gmail_account)),
-            "full_download_progress": _get_full_download_progress(profile_settings.gmail_account),
-        },
-        "imap": {
-            "account": profile_settings.imap_login,
-            "summary": db.get_sync_summary(profile_settings.imap_login),
-            "counts": db.get_email_counts(profile_settings.imap_login),
-            "progress": _get_progress(profile_settings.imap_login),
-            "full_download_summary": db.get_sync_summary(_full_download_summary_key(profile_settings.imap_login)),
-            "full_download_progress": _get_full_download_progress(profile_settings.imap_login),
-        },
+        "gmail": _account_entry(profile_settings.gmail_account),
+        "imap": _account_entry(profile_settings.imap_login),
     }
+
+    accounts_meta = _resolve_account_metadata(name)
+    if accounts_meta is not None:
+        status["configured"] = bool(accounts_meta) or status["configured"]
+        status["accounts"] = []
+        gmail_set = imap_set = False
+        for meta in accounts_meta:
+            entry = {
+                "integration_id": meta["integration_id"], "provider": meta["provider"], "label": meta["label"],
+                **_account_entry(meta["account"]),
+            }
+            status["accounts"].append(entry)
+            # Backward-compat: the pre-SPA dashboard only knows how to render one
+            # gmail card and one imap/zoho card per profile.
+            if meta["provider"] == "gmail" and not gmail_set:
+                status["gmail"] = entry
+                gmail_set = True
+            elif meta["provider"] in ("imap", "zoho") and not imap_set:
+                status["imap"] = entry
+                imap_set = True
+
+    return status
 
 
 def _mask_secret(value: Any) -> str:
@@ -840,7 +1061,7 @@ def _profile_config(name: str) -> Dict[str, Any]:
     }
 
 
-def _profile_token_stats(name: str, days: int = 14) -> Dict[str, Any]:
+def _profile_token_stats(name: str, days: int = 30) -> Dict[str, Any]:
     """
     Daily input/output token usage for one profile over the last `days` days, plus tokens saved
     by the TEI/rerank router. tei_saved_tokens is forced to 0 for every day when the profile's
@@ -856,7 +1077,7 @@ def _profile_token_stats(name: str, days: int = 14) -> Dict[str, Any]:
 
 
 def _combine_token_stats(per_profile: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Sums each profile's 14-day daily token series into one cross-profile series for the dashboard."""
+    """Sums each profile's 30-day daily token series into one cross-profile series for the dashboard."""
     combined_by_day: Dict[str, Dict[str, int]] = {}
     tei_enabled_any = False
     for stats in per_profile:
@@ -874,11 +1095,14 @@ def _combine_token_stats(per_profile: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _dashboard_status() -> Dict[str, Any]:
-    """Status payload backing the /api/status route and the web dashboard."""
+def _dashboard_status(profile_names: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Status payload backing the /api/status route and the web dashboard.
+    `profile_names=None` (the default, used by every existing caller) means
+    every configured profile; the /api/status route passes a restricted list
+    to scope a non-admin caller to their own profile."""
     profiles: Dict[str, Any] = {}
     token_stats_per_profile: List[Dict[str, Any]] = []
-    for name in list_profile_names():
+    for name in (profile_names if profile_names is not None else list_profile_names()):
         status = _profile_status(name)
         # The "default" profile always exists (list_profile_names() guarantees it) even when no
         # one has ever set it up -- don't clutter the dashboard with a placeholder-only card for it.
@@ -902,7 +1126,7 @@ def _dashboard_status() -> Dict[str, Any]:
             "interval": settings.download_all_scheduler.interval,
             "interval_seconds": settings.download_all_scheduler.interval_seconds,
         },
-        # Token spend is shown as one combined 14-day total on the dashboard, not per profile.
+        # Token spend is shown as one combined 30-day total on the dashboard, not per profile.
         "token_stats": _combine_token_stats(token_stats_per_profile),
         "profiles": profiles,
     }
@@ -1227,473 +1451,58 @@ async def get_version(request: Request) -> PlainTextResponse:
     return PlainTextResponse(get_version_info())
 
 
-# =====================================================================
-# WEB DASHBOARD (status + manual sync controls)
-# =====================================================================
-
-_DASHBOARD_SHARED_CSS = """
-  :root {
-    --surface-1: #fcfcfb;
-    --page-plane: #f9f9f7;
-    --text-primary: #0b0b0b;
-    --text-secondary: #52514e;
-    --text-muted: #898781;
-    --border: rgba(11,11,11,0.10);
-    --gridline: #e1e0d9;
-    --series-1: #2a78d6;
-    --series-2: #eb6834;
-    --status-good: #0ca30c;
-    --status-critical: #d03b3b;
-  }
-  * { box-sizing: border-box; }
-  body {
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: var(--page-plane); color: var(--text-primary);
-    margin: 0; padding: 24px 32px 40px;
-  }
-  a { color: var(--series-1); text-decoration: none; }
-  .topbar { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
-  .topbar h1 { font-size: 19px; margin: 0; font-weight: 600; }
-  .tabs { display: flex; gap: 4px; }
-  .tab { font-size: 13px; padding: 6px 12px; border-radius: 6px; color: var(--text-secondary); }
-  .tab:hover { background: var(--gridline); }
-  .tab.active { background: var(--surface-1); color: var(--text-primary); font-weight: 600; border: 1px solid var(--border); }
-  .subhead { color: var(--text-secondary); font-size: 12.5px; margin: 4px 0 20px; }
-  .muted { color: var(--text-muted); }
-  button {
-    background: var(--series-1); color: #fff; border: none; padding: 6px 14px;
-    border-radius: 6px; cursor: pointer; font-size: 12.5px; margin-right: 6px; font-weight: 500;
-  }
-  button:hover { filter: brightness(1.08); }
-  button.stop { background: var(--status-critical); }
-  button.ghost { background: transparent; color: var(--series-1); border: 1px solid var(--border); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
-  .panel {
-    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
-    padding: 16px 18px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(11,11,11,0.04);
-  }
-  .panel-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
-  .panel-header h2 { font-size: 14.5px; margin: 0; font-weight: 600; display: inline; }
-"""
-
-_DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Email Triage - Dashboard</title>
-<style>
-""" + _DASHBOARD_SHARED_CSS + """
-  .badge { display: inline-block; font-size: 10.5px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; font-weight: 500; }
-  .badge.running { background: #dbeafe; color: #1d4ed8; }
-  .badge.idle { background: var(--gridline); color: var(--text-secondary); }
-  .pill { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: var(--gridline); color: var(--text-secondary); margin: 1px 3px 1px 0; white-space: nowrap; }
-  .pill.important { background: #fde3d3; color: #9a4a1f; }
-  .pill.error { background: #fbdada; color: #9a1f1f; }
-
-  .stat-row { display: flex; gap: 28px; margin-bottom: 14px; flex-wrap: wrap; }
-  .stat-tile { min-width: 120px; }
-  .stat-value { font-size: 24px; font-weight: 600; line-height: 1.15; }
-  .stat-label { font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; }
-
-  .token-chart { display: flex; align-items: flex-end; gap: 4px; height: 64px; margin-top: 4px; }
-  .token-bar { flex: 1; position: relative; background: var(--series-2); border-radius: 2px 2px 0 0; min-height: 2px; }
-  .token-bar-in { position: absolute; bottom: 0; left: 0; width: 100%; background: var(--series-1); border-radius: 2px 2px 0 0; }
-  .chart-legend { display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--text-secondary); margin-top: 8px; }
-  .legend-item { display: flex; align-items: center; gap: 5px; }
-  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
-
-  table.profiles-table { width: 100%; border-collapse: collapse; }
-  table.profiles-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); padding: 8px 12px; border-bottom: 1px solid var(--gridline); }
-  table.profiles-table td { padding: 12px; border-bottom: 1px solid var(--gridline); font-size: 13px; vertical-align: top; }
-  table.profiles-table tr:last-child td { border-bottom: none; }
-  .acct-line { margin-bottom: 3px; }
-  .acct-email { font-weight: 500; }
-  tr.detail-row td { background: var(--page-plane); padding: 14px 18px; border-bottom: 1px solid var(--gridline); }
-  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .account-detail { font-size: 12.5px; }
-  .account-detail .label { color: var(--text-secondary); font-weight: 600; margin-bottom: 4px; }
-  .errors { color: var(--status-critical); }
-  .progress-wrap { margin-top: 6px; }
-  .progress-bar { background: var(--gridline); border-radius: 999px; height: 6px; overflow: hidden; }
-  .progress-fill { background: var(--series-1); height: 100%; }
-  .progress-label { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
-  .archive { margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
-  details.config { margin-top: 4px; grid-column: 1 / -1; }
-  details.config summary { cursor: pointer; font-size: 12px; color: var(--series-1); }
-  .cfg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; font-size: 12px; margin-top: 8px; }
-  .cfg-key { color: var(--text-secondary); }
-  .cfg-val { word-break: break-word; }
-</style>
-</head>
-<body>
-  <div class="topbar">
-    <h1>Email Triage</h1>
-    <nav class="tabs">
-      <a class="tab active" href="/dashboard">Dashboard</a>
-      <a class="tab" href="/dashboard/logs">Logs</a>
-    </nav>
-  </div>
-  <div class="subhead" id="scheduler-info">Loading...</div>
-
-  <section class="panel">
-    <div class="panel-header">
-      <h2>Token Usage</h2>
-      <span class="muted" id="token-window-label"></span>
-    </div>
-    <div class="stat-row" id="token-stat-tiles"></div>
-    <div class="token-chart" id="token-chart"></div>
-    <div class="chart-legend">
-      <span class="legend-item"><span class="swatch" style="background:var(--series-1)"></span>Input</span>
-      <span class="legend-item"><span class="swatch" style="background:var(--series-2)"></span>Output</span>
-      <span class="muted" id="tei-note"></span>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-header">
-      <h2>Profiles</h2>
-      <div>
-        <button onclick="startSync('all')">Sync All</button>
-        <button class="stop" onclick="stopSync('all')">Stop All</button>
-      </div>
-    </div>
-    <table class="profiles-table">
-      <thead>
-        <tr><th>Profile</th><th>Gmail</th><th>IMAP</th><th>Errors</th><th>Actions</th></tr>
-      </thead>
-      <tbody id="profiles-body"></tbody>
-    </table>
-  </section>
-
-<script>
-// Native <details> elements (and our own expand/collapse toggles) lose their open/closed state
-// whenever the periodic poll below rebuilds the DOM from scratch -- persist both here (keyed by
-// profile name) and restore them on each render instead of always defaulting to closed.
-const configOpenState = {};
-const detailOpenState = {};
-
-async function loadStatus() {
-  const res = await fetch('/api/status');
-  const data = await res.json();
-  const sched = data.scheduler;
-  const downloadSched = data.download_all_scheduler;
-  document.getElementById('scheduler-info').textContent =
-    'Background scheduler: ' + (sched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + sched.interval + ')'
-    + '  \\u00b7  Full download scheduler: ' + (downloadSched.enabled ? 'enabled' : 'disabled') + ' (interval: ' + downloadSched.interval + ')';
-
-  renderTokenStats(data.token_stats);
-
-  const tbody = document.getElementById('profiles-body');
-  tbody.innerHTML = '';
-  for (const [name, p] of Object.entries(data.profiles)) {
-    tbody.appendChild(renderProfileMainRow(name, p));
-    tbody.appendChild(renderProfileDetailRow(name, p));
-  }
-}
-
-function formatTokens(n) {
-  n = n || 0;
-  if (Math.abs(n) >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'K';
-  return String(n);
-}
-
-function statTile(label, value) {
-  return '<div class="stat-tile"><div class="stat-value">' + value + '</div><div class="stat-label">' + label + '</div></div>';
-}
-
-function renderTokenStats(stats) {
-  const tilesEl = document.getElementById('token-stat-tiles');
-  const chartEl = document.getElementById('token-chart');
-  const teiNote = document.getElementById('tei-note');
-  const windowLabel = document.getElementById('token-window-label');
-  if (!stats || !stats.daily || !stats.daily.length) {
-    tilesEl.innerHTML = '';
-    chartEl.innerHTML = '';
-    teiNote.textContent = '';
-    windowLabel.textContent = '';
-    return;
-  }
-  const daily = stats.daily;
-  const totalIn = daily.reduce((a, d) => a + d.input_tokens, 0);
-  const totalOut = daily.reduce((a, d) => a + d.output_tokens, 0);
-  const totalSaved = daily.reduce((a, d) => a + d.tei_saved_tokens, 0);
-  windowLabel.textContent = 'last ' + daily.length + ' days \\u00b7 all profiles';
-
-  tilesEl.innerHTML =
-    statTile('Total input', formatTokens(totalIn)) +
-    statTile('Total output', formatTokens(totalOut)) +
-    statTile('Saved by router', stats.tei_enabled ? formatTokens(totalSaved) : '\\u2014');
-
-  const maxTotal = Math.max(1, ...daily.map(d => d.input_tokens + d.output_tokens));
-  chartEl.innerHTML = daily.map(d => {
-    const total = d.input_tokens + d.output_tokens;
-    const heightPct = Math.max(Math.round((total / maxTotal) * 100), total > 0 ? 4 : 1);
-    const inputPct = total ? Math.round((d.input_tokens / total) * 100) : 0;
-    const title = d.day + ': ' + formatTokens(d.input_tokens) + ' in / ' + formatTokens(d.output_tokens) + ' out'
-      + (d.tei_saved_tokens ? ' / ~' + formatTokens(d.tei_saved_tokens) + ' saved by router' : '');
-    return '<div class="token-bar" title="' + title + '" style="height:' + heightPct + '%">'
-      + '<div class="token-bar-in" style="height:' + inputPct + '%"></div>'
-      + '</div>';
-  }).join('');
-
-  teiNote.textContent = stats.tei_enabled ? '' : '(router disabled on all profiles)';
-}
-
-function pill(text, cls) {
-  return '<span class="pill' + (cls ? ' ' + cls : '') + '">' + text + '</span>';
-}
-
-function acctSummary(acct) {
-  const counts = acct.counts || {};
-  const s = acct.summary;
-  const pills = [
-    counts.level_2 ? pill(counts.level_2 + ' L2', 'important') : '',
-    counts.level_1 ? pill(counts.level_1 + ' L1') : '',
-    counts.level_0 ? pill(counts.level_0 + ' L0') : '',
-    counts.pending_triage ? pill(counts.pending_triage + ' pending') : '',
-  ].join('');
-  const lastSync = s && s.last_download_at ? s.last_download_at : 'never synced';
-  return '<div class="acct-line acct-email">' + acct.account + '</div>'
-    + '<div class="acct-line">' + (pills || '<span class="muted">no cached mail</span>') + '</div>'
-    + '<div class="acct-line muted">last sync: ' + lastSync + '</div>';
-}
-
-function acctErrors(acct) {
-  const errs = [];
-  if (acct.summary && acct.summary.errors && acct.summary.errors.length) errs.push(...acct.summary.errors);
-  if (acct.full_download_summary && acct.full_download_summary.errors && acct.full_download_summary.errors.length) errs.push(...acct.full_download_summary.errors);
-  return errs;
-}
-
-function renderProgress(progress) {
-  if (!progress) return '';
-  const total = progress.total || 0;
-  const processed = progress.processed || 0;
-  const pct = total ? Math.round((processed / total) * 100) : 0;
-  const label = progress.phase === 'listing'
-    ? 'listing unread mail\\u2026'
-    : progress.phase === 'listing_all'
-      ? 'listing full mailbox\\u2026'
-      : processed + ' / ' + total + (progress.current_subject ? ' \\u2014 ' + progress.current_subject : '');
-  return '<div class="progress-wrap">'
-    + '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div>'
-    + '<div class="progress-label">' + label + '</div>'
-    + '</div>';
-}
-
-function renderFullDownload(acct) {
-  const s = acct.full_download_summary;
-  const progress = renderProgress(acct.full_download_progress);
-  if (!s && !progress) return '';
-  const line = s
-    ? 'full archive: last run ' + (s.last_full_download_at || 'n/a')
-      + ' \\u00b7 found ' + (s.total_on_server ?? 0)
-      + ' \\u00b7 downloaded ' + (s.downloaded ?? 0)
-      + ' \\u00b7 already cached ' + (s.skipped_cached ?? 0)
-      + (s.status === 'stopped' ? ' (stopped)' : '')
-    : 'full archive: in progress\\u2026';
-  return '<div class="archive"><div>' + line + '</div>' + progress + '</div>';
-}
-
-function renderAccountDetail(acct) {
-  const s = acct.summary;
-  const counts = s
-    ? '<div>downloaded: ' + (s.downloaded ?? 0) + ' \\u00b7 reconciled: ' + (s.reconciled_read ?? 0) + ' \\u00b7 triaged: ' + (s.triaged ?? 0) + '</div>'
-    : '';
-  const errors = acctErrors(acct);
-  const errorsHtml = errors.length ? '<div class="errors">' + errors.join('; ') + '</div>' : '';
-  return counts + errorsHtml + renderProgress(acct.progress) + renderFullDownload(acct);
-}
-
-function renderConfig(cfg) {
-  if (!cfg) return '';
-  const rows = Object.entries(cfg).map(([k, v]) =>
-    '<div class="cfg-key">' + k + '</div><div class="cfg-val">' + v + '</div>'
-  ).join('');
-  return '<details class="config"><summary>Configuration</summary><div class="cfg-grid">' + rows + '</div></details>';
-}
-
-function cssEscape(name) {
-  return name.replace(/[^a-zA-Z0-9_-]/g, '_');
-}
-
-function renderProfileMainRow(name, p) {
-  const tr = document.createElement('tr');
-  const badge = p.running
-    ? '<span class="badge running">running</span>'
-    : '<span class="badge idle">idle</span>';
-  const allErrors = [...acctErrors(p.gmail), ...acctErrors(p.imap)];
-  const errorsCell = allErrors.length
-    ? '<span class="pill error">' + allErrors.length + ' error' + (allErrors.length > 1 ? 's' : '') + '</span>'
-    : '<span class="muted">\\u2014</span>';
-
-  tr.innerHTML =
-    '<td><strong>' + name + '</strong>' + badge + '</td>'
-    + '<td>' + acctSummary(p.gmail) + '</td>'
-    + '<td>' + acctSummary(p.imap) + '</td>'
-    + '<td>' + errorsCell + '</td>'
-    + '<td>'
-      + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startSync(\\'' + name + '\\')">Sync</button>'
-      + '<button ' + (p.running ? 'disabled' : '') + ' onclick="startFullDownload(\\'' + name + '\\')">Download All</button>'
-      + '<button class="stop" ' + (p.running ? '' : 'disabled') + ' onclick="stopSync(\\'' + name + '\\')">Stop</button>'
-      + '<button class="ghost" onclick="toggleDetail(\\'' + name + '\\')">Details</button>'
-    + '</td>';
-  return tr;
-}
-
-function renderProfileDetailRow(name, p) {
-  const tr = document.createElement('tr');
-  tr.className = 'detail-row';
-  tr.id = 'detail-' + cssEscape(name);
-  tr.style.display = detailOpenState[name] ? '' : 'none';
-  tr.innerHTML = '<td colspan="5"><div class="detail-grid">'
-    + '<div class="account-detail"><div class="label">Gmail</div>' + renderAccountDetail(p.gmail) + '</div>'
-    + '<div class="account-detail"><div class="label">IMAP</div>' + renderAccountDetail(p.imap) + '</div>'
-    + renderConfig(p.config)
-    + '</div></td>';
-
-  const details = tr.querySelector('details.config');
-  if (details) {
-    details.open = !!configOpenState[name];
-    details.addEventListener('toggle', () => { configOpenState[name] = details.open; });
-  }
-  return tr;
-}
-
-function toggleDetail(name) {
-  detailOpenState[name] = !detailOpenState[name];
-  const row = document.getElementById('detail-' + cssEscape(name));
-  if (row) row.style.display = detailOpenState[name] ? '' : 'none';
-}
-
-async function startSync(profile) {
-  await fetch('/api/sync/start?profile=' + encodeURIComponent(profile), { method: 'POST' });
-  loadStatus();
-}
-
-async function stopSync(profile) {
-  await fetch('/api/sync/stop?profile=' + encodeURIComponent(profile), { method: 'POST' });
-  loadStatus();
-}
-
-async function startFullDownload(profile) {
-  await fetch('/api/download_all/start?profile=' + encodeURIComponent(profile), { method: 'POST' });
-  loadStatus();
-}
-
-loadStatus();
-setInterval(loadStatus, 5000);
-</script>
-</body>
-</html>
-"""
-
-_DASHBOARD_LOGS_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Email Triage - Logs</title>
-<style>
-""" + _DASHBOARD_SHARED_CSS + """
-  .logs-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status-good); display: inline-block; }
-  .live-dot.disconnected { background: var(--gridline); }
-  #log-console { background: #0f1115; color: #d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 12px; border-radius: 8px; height: 74vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
-  #log-console .lvl-ERROR { color: #f87171; }
-  #log-console .lvl-WARNING { color: #fbbf24; }
-  #log-console .lvl-INFO { color: #d1d5db; }
-</style>
-</head>
-<body>
-  <div class="topbar">
-    <h1>Email Triage</h1>
-    <nav class="tabs">
-      <a class="tab" href="/dashboard">Dashboard</a>
-      <a class="tab active" href="/dashboard/logs">Logs</a>
-    </nav>
-  </div>
-  <div class="subhead">Live application log stream (last 500 lines, in-memory).</div>
-
-  <section class="panel">
-    <div class="logs-header">
-      <span class="live-dot" id="log-live-dot"></span>
-      <button class="ghost" onclick="document.getElementById('log-console').textContent = ''">Clear</button>
-    </div>
-    <div id="log-console"></div>
-  </section>
-
-<script>
-const MAX_LOG_LINES = 500;
-
-function appendLogLine(line) {
-  const console_ = document.getElementById('log-console');
-  const match = line.match(/\\[(INFO|WARNING|ERROR|CRITICAL|DEBUG)\\]/);
-  const cls = match ? 'lvl-' + match[1] : '';
-  const atBottom = console_.scrollTop + console_.clientHeight >= console_.scrollHeight - 5;
-
-  const row = document.createElement('div');
-  if (cls) row.className = cls;
-  row.textContent = line;
-  console_.appendChild(row);
-
-  while (console_.childNodes.length > MAX_LOG_LINES) {
-    console_.removeChild(console_.firstChild);
-  }
-  if (atBottom) {
-    console_.scrollTop = console_.scrollHeight;
-  }
-}
-
-function connectLogStream() {
-  const dot = document.getElementById('log-live-dot');
-  const source = new EventSource('/api/logs/stream');
-  source.onopen = () => dot.classList.remove('disconnected');
-  source.onerror = () => dot.classList.add('disconnected');
-  source.onmessage = (event) => appendLogLine(event.data);
-}
-
-connectLogStream();
-</script>
-</body>
-</html>
-"""
-
-
 @mcp.custom_route("/dashboard", methods=["GET"])
-async def dashboard(request: Request) -> HTMLResponse:
-    return HTMLResponse(_DASHBOARD_HTML)
+async def dashboard(request: Request) -> Response:
+    # Superseded by the SPA at "/" -- kept as a redirect so old bookmarks still land somewhere.
+    return RedirectResponse(url="/", status_code=302)
 
 
 @mcp.custom_route("/dashboard/logs", methods=["GET"])
-async def dashboard_logs(request: Request) -> HTMLResponse:
-    return HTMLResponse(_DASHBOARD_LOGS_HTML)
+async def dashboard_logs(request: Request) -> Response:
+    return RedirectResponse(url="/logs", status_code=302)
 
 
 @mcp.custom_route("/api/status", methods=["GET"])
+@requires_active_user
 async def api_status(request: Request) -> JSONResponse:
-    return JSONResponse(_dashboard_status())
+    identity: CurrentIdentity = request.state.identity
+    show_all = identity.is_admin and request.query_params.get("all") == "1"
+    names = None if show_all else [identity.username]
+    return JSONResponse(_dashboard_status(names))
 
 
 @mcp.custom_route("/api/sync/start", methods=["POST"])
-async def api_sync_start(request: Request) -> JSONResponse:
-    profile = request.query_params.get("profile", "all")
+@requires_active_user
+async def api_sync_start(request: Request) -> Response:
+    identity: CurrentIdentity = request.state.identity
+    profile = request.query_params.get("profile", identity.username)
+    if (profile.strip().lower() == "all" or profile != identity.username) and not identity.is_admin:
+        return error_response(403, "forbidden", "Only admins may sync another user's profile or 'all'")
     return JSONResponse(_start_sync(profile))
 
 
 @mcp.custom_route("/api/sync/stop", methods=["POST"])
-async def api_sync_stop(request: Request) -> JSONResponse:
-    profile = request.query_params.get("profile", "all")
+@requires_active_user
+async def api_sync_stop(request: Request) -> Response:
+    identity: CurrentIdentity = request.state.identity
+    profile = request.query_params.get("profile", identity.username)
+    if (profile.strip().lower() == "all" or profile != identity.username) and not identity.is_admin:
+        return error_response(403, "forbidden", "Only admins may stop another user's profile or 'all'")
     return JSONResponse(_stop_sync(profile))
 
 
 @mcp.custom_route("/api/download_all/start", methods=["POST"])
-async def api_download_all_start(request: Request) -> JSONResponse:
-    profile = request.query_params.get("profile", "all")
+@requires_active_user
+async def api_download_all_start(request: Request) -> Response:
+    identity: CurrentIdentity = request.state.identity
+    profile = request.query_params.get("profile", identity.username)
+    if (profile.strip().lower() == "all" or profile != identity.username) and not identity.is_admin:
+        return error_response(403, "forbidden", "Only admins may download another user's profile or 'all'")
     return JSONResponse(_start_full_download(profile))
 
 
 @mcp.custom_route("/api/logs", methods=["GET"])
+@requires_admin
 async def api_logs(request: Request) -> JSONResponse:
     since = int(request.query_params.get("since", 0))
     lines = _log_lines_since(since)
@@ -1701,6 +1510,7 @@ async def api_logs(request: Request) -> JSONResponse:
 
 
 @mcp.custom_route("/api/logs/stream", methods=["GET"])
+@requires_admin
 async def api_logs_stream(request: Request) -> StreamingResponse:
     async def event_generator():
         last_seq = 0
@@ -1716,21 +1526,38 @@ async def api_logs_stream(request: Request) -> StreamingResponse:
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+# Registered last: FastMCP appends custom routes to the underlying Starlette app in
+# registration order and gives them the lowest match precedence, so this catch-all can
+# never shadow /sse, /messages/, or any /api/* route registered above.
+web_static.register_spa_route(mcp)
+
+
 if __name__ == "__main__":
     if settings.mcp_transport == "sse":
         import uvicorn
         import anyio
-        
-        # Load profile token map
+
+        # Bring up the app DB (users/sessions/mcp_tokens/integrations/settings)
+        # and seed the bootstrap admin if this is a brand-new install. Both are
+        # idempotent, so this is safe to run on every startup.
+        appdb.init_app_db()
+        with appdb.get_conn() as _bootstrap_conn:
+            if users_store.seed_admin(_bootstrap_conn):
+                logger.warning(
+                    "Seeded bootstrap admin user with the default password -- it must be "
+                    "changed at first login."
+                )
+
+        # Load legacy profile token map (fallback for MCP tokens not yet migrated into the DB)
         token_map = load_token_profile_map()
         masked_map = {k[:4] + "...": v for k, v in token_map.items()}
-        logger.info("Starting SSE MCP server. Loaded profile token mappings: %s", masked_map)
-        
+        logger.info("Starting SSE MCP server. Loaded legacy profile token mappings: %s", masked_map)
+
         # Get the standard FastMCP SSE Starlette app
         app = mcp.sse_app()
-        
-        # Add token validation middleware
-        app.add_middleware(MCPTokenAuthMiddleware, token_map=token_map)
+
+        # Add token validation middleware (DB-backed mcp_tokens, falling back to the legacy map)
+        app.add_middleware(AppAuthMiddleware, token_map=token_map)
         
         async def run_server():
             config = uvicorn.Config(

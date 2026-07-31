@@ -1220,8 +1220,13 @@ class TestProfileConfigMasking:
 
 class TestDashboardRoutes:
     @pytest.fixture
-    def client(self, monkeypatch):
+    def client(self, tmp_path, monkeypatch):
         from starlette.testclient import TestClient
+        from cryptography.fernet import Fernet
+
+        import appdb
+        import secretstore
+        import users_store as us
 
         db = MagicMock(spec=EmailDB)
         db.get_sync_summary.return_value = None
@@ -1233,22 +1238,38 @@ class TestDashboardRoutes:
         monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
         monkeypatch.setattr(mcp_server, "list_profile_names", lambda: ["default"])
 
-        return TestClient(mcp_server.mcp.sse_app())
+        app_db_path = tmp_path / "app.db"
+        monkeypatch.setattr(appdb, "DEFAULT_APP_DB_PATH", app_db_path)
+        monkeypatch.setenv("EMAIL_TRIAGE_SECRET_KEY", Fernet.generate_key().decode())
+        secretstore.reset_key_cache()
+        appdb.init_app_db(app_db_path)
+        with appdb.get_conn(app_db_path) as conn:
+            us.create_user(conn, username="admin-tester", password="a_long_enough_password", is_admin=True, must_change_password=False)
 
-    def test_dashboard_returns_html(self, client):
-        response = client.get("/dashboard")
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert "Email Triage" in response.text
+        test_client = TestClient(mcp_server.mcp.sse_app())
+        login_resp = test_client.post("/api/auth/login", json={"username": "admin-tester", "password": "a_long_enough_password"})
+        assert login_resp.status_code == 200
+        return test_client
 
-    def test_dashboard_logs_returns_html(self, client):
-        response = client.get("/dashboard/logs")
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert "log-console" in response.text
+    def test_dashboard_redirects_to_spa_root(self, client):
+        response = client.get("/dashboard", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/"
+
+    def test_dashboard_logs_redirects_to_spa_logs(self, client):
+        response = client.get("/dashboard/logs", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/logs"
+
+    def test_api_status_requires_login(self):
+        from starlette.testclient import TestClient
+
+        anon_client = TestClient(mcp_server.mcp.sse_app())
+        response = anon_client.get("/api/status")
+        assert response.status_code == 401
 
     def test_api_status_shape(self, client):
-        response = client.get("/api/status")
+        response = client.get("/api/status?all=1")
         assert response.status_code == 200
         data = response.json()
         assert "scheduler" in data
@@ -1284,6 +1305,28 @@ class TestDashboardRoutes:
         assert response.json() == {"status": "stop_requested", "profile": "default"}
         assert mcp_server._get_stop_event("default").is_set() is True
 
+    def test_non_admin_cannot_sync_another_profile(self, tmp_path, monkeypatch):
+        from starlette.testclient import TestClient
+        from cryptography.fernet import Fernet
+
+        import appdb
+        import secretstore
+        import users_store as us
+
+        app_db_path = tmp_path / "app2.db"
+        monkeypatch.setattr(appdb, "DEFAULT_APP_DB_PATH", app_db_path)
+        monkeypatch.setenv("EMAIL_TRIAGE_SECRET_KEY", Fernet.generate_key().decode())
+        secretstore.reset_key_cache()
+        appdb.init_app_db(app_db_path)
+        with appdb.get_conn(app_db_path) as conn:
+            us.create_user(conn, username="bob", password="a_long_enough_password", must_change_password=False)
+
+        test_client = TestClient(mcp_server.mcp.sse_app())
+        test_client.post("/api/auth/login", json={"username": "bob", "password": "a_long_enough_password"})
+
+        response = test_client.post("/api/sync/start?profile=someone-else")
+        assert response.status_code == 403
+
     def test_download_all_start_route(self, client, monkeypatch):
         started = threading.Event()
         monkeypatch.setattr(mcp_server, "full_download_profile", lambda profile: started.set())
@@ -1294,7 +1337,7 @@ class TestDashboardRoutes:
         assert started.wait(timeout=2)
 
     def test_api_status_includes_full_download_fields(self, client):
-        response = client.get("/api/status")
+        response = client.get("/api/status?all=1")
         data = response.json()
         profile_data = data["profiles"]["default"]
         assert "full_download_summary" in profile_data["gmail"]
@@ -1325,6 +1368,27 @@ class TestDashboardRoutes:
         lines = [entry["line"] for entry in response.json()["logs"]]
         assert not any("old line" in l for l in lines)
         assert any("new line" in l for l in lines)
+
+    def test_api_logs_requires_admin(self, tmp_path, monkeypatch):
+        from starlette.testclient import TestClient
+        from cryptography.fernet import Fernet
+
+        import appdb
+        import secretstore
+        import users_store as us
+
+        app_db_path = tmp_path / "app3.db"
+        monkeypatch.setattr(appdb, "DEFAULT_APP_DB_PATH", app_db_path)
+        monkeypatch.setenv("EMAIL_TRIAGE_SECRET_KEY", Fernet.generate_key().decode())
+        secretstore.reset_key_cache()
+        appdb.init_app_db(app_db_path)
+        with appdb.get_conn(app_db_path) as conn:
+            us.create_user(conn, username="bob", password="a_long_enough_password", must_change_password=False)
+
+        test_client = TestClient(mcp_server.mcp.sse_app())
+        test_client.post("/api/auth/login", json={"username": "bob", "password": "a_long_enough_password"})
+
+        assert test_client.get("/api/logs").status_code == 403
 
 
 class TestLogBufferHelpers:

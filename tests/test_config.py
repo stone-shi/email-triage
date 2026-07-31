@@ -189,6 +189,59 @@ class TestSettingsLoadForProfile:
         assert s.active_smtp_login == "smtp_user@test.com"
 
 
+class TestSettingsLoadForUser:
+    def test_none_returns_global_view_no_mkdir(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        s = Settings.load_for_user(None)
+        assert isinstance(s, Settings)
+        assert s.workspace_dir == Path(__file__).parent.parent.resolve()
+
+    def test_unresolvable_string_falls_back_to_legacy_profile(self):
+        s = Settings.load_for_user("default")
+        assert isinstance(s, Settings)
+        assert s.workspace_dir.name == "default"
+
+    def test_load_for_profile_delegates_to_load_for_user(self):
+        s = Settings.load_for_profile("default")
+        assert isinstance(s, Settings)
+        assert s.workspace_dir.name == "default"
+
+    def test_db_resolved_user_gets_workspace_slug_dir_and_db_overlay(self, tmp_path, monkeypatch):
+        import appdb
+        import users_store
+        import app_settings_store
+
+        db_path = tmp_path / "app.db"
+        appdb.init_app_db(db_path)
+        with appdb.get_conn(db_path) as conn:
+            row = users_store.create_user(conn, username="bob", password="a_long_enough_password")
+            app_settings_store.set_value(conn, "triage_model", "overlaid-model")
+
+        with appdb.get_conn(db_path) as conn:
+            s = Settings.load_for_user("bob", conn=conn)
+        assert s.workspace_dir.name == row["workspace_slug"]
+        assert s.triage_model == "overlaid-model"
+        s.workspace_dir.rmdir()
+
+    def test_db_overlay_applies_user_override_for_own_user(self, tmp_path):
+        import appdb
+        import users_store
+        import app_settings_store
+
+        db_path = tmp_path / "app.db"
+        appdb.init_app_db(db_path)
+        with appdb.get_conn(db_path) as conn:
+            row = users_store.create_user(conn, username="alice", password="a_long_enough_password")
+            app_settings_store.set_user_value(
+                conn, row["id"], "triage.whitelist_vip_senders", ["boss@example.com"]
+            )
+
+        with appdb.get_conn(db_path) as conn:
+            s = Settings.load_for_user("alice", conn=conn)
+        assert s.triage.whitelist_vip_senders == ["boss@example.com"]
+        s.workspace_dir.rmdir()
+
+
 class TestSettingsSyncTriage:
     def test_sync_tei_url(self):
         s = Settings()

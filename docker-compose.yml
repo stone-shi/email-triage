@@ -20,6 +20,32 @@ services:
     command: ["python", "mcp_server.py"]
     networks:
       - home-net
+    labels:
+      # Traefik runs with exposedByDefault=false, so nothing is routed without
+      # this. Its docker provider is pinned to home-net, which is the network
+      # this service is already on; the label restates it so adding a second
+      # network later cannot make Traefik pick the wrong address.
+      - "traefik.enable=true"
+      - "traefik.docker.network=home-net"
+
+      # 8000 is the *container* port. Traefik talks to the container directly on
+      # home-net, so the published 4003 above is not involved in this path.
+      - "traefik.http.services.email-triage.loadbalancer.server.port=8000"
+
+      - "traefik.http.routers.email-triage.rule=Host(`emails.dev.local.shifamily.com`)"
+      - "traefik.http.routers.email-triage.entrypoints=web-secure"
+      - "traefik.http.routers.email-triage.tls=true"
+      # DNS-01 through Cloudflare, so a genuine certificate is issued for an
+      # internal name that Let's Encrypt can never reach.
+      - "traefik.http.routers.email-triage.tls.certresolver=le"
+
+      # Port 80 only redirects. Also matters for the OAuth connect flow below:
+      # Google/Zoho only accept https:// (or http://localhost) redirect URIs.
+      - "traefik.http.routers.email-triage-http.rule=Host(`email.dev.local.shifamily.com`)"
+      - "traefik.http.routers.email-triage-http.entrypoints=web"
+      - "traefik.http.routers.email-triage-http.middlewares=email-triage-https"
+      - "traefik.http.middlewares.email-triage-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.email-triage-https.redirectscheme.permanent=true"
 
 networks:
   home-net:

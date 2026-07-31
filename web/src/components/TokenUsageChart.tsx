@@ -36,11 +36,11 @@ export function TokenUsageChart({ daily }: { daily: DailyStat[] }) {
       <div className="row" style={{ fontSize: 12 }}>
         <span className="muted">last {daily.length} days</span>
         <span className="row" style={{ gap: 4 }}>
-          <span style={{ width: 9, height: 9, background: "#5b8def", display: "inline-block", borderRadius: 2 }} />
+          <span style={{ width: 9, height: 9, background: "var(--accent)", display: "inline-block", borderRadius: 2 }} />
           input
         </span>
         <span className="row" style={{ gap: 4 }}>
-          <span style={{ width: 9, height: 9, background: "#2c6fd1", display: "inline-block", borderRadius: 2 }} />
+          <span style={{ width: 9, height: 9, background: "#93c5fd", display: "inline-block", borderRadius: 2 }} />
           output
         </span>
       </div>

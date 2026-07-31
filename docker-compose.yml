@@ -41,7 +41,7 @@ services:
 
       # Port 80 only redirects. Also matters for the OAuth connect flow below:
       # Google/Zoho only accept https:// (or http://localhost) redirect URIs.
-      - "traefik.http.routers.email-triage-http.rule=Host(`email.dev.local.shifamily.com`)"
+      - "traefik.http.routers.email-triage-http.rule=Host(`emails.dev.local.shifamily.com`)"
       - "traefik.http.routers.email-triage-http.entrypoints=web"
       - "traefik.http.routers.email-triage-http.middlewares=email-triage-https"
       - "traefik.http.middlewares.email-triage-https.redirectscheme.scheme=https"

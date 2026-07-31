@@ -16,19 +16,21 @@ export function AppShell() {
           <Gauge size={18} />
           Dashboard
         </NavLink>
-        <NavLink to="/logs" className="row">
-          <TerminalWindow size={18} />
-          Logs
-        </NavLink>
         <NavLink to="/settings/integrations" className="row">
           <GearSix size={18} />
           Settings
         </NavLink>
         {user?.is_admin && (
-          <NavLink to="/admin/users" className="row">
-            <ShieldCheck size={18} />
-            Admin
-          </NavLink>
+          <>
+            <NavLink to="/logs" className="row">
+              <TerminalWindow size={18} />
+              Logs
+            </NavLink>
+            <NavLink to="/admin/users" className="row">
+              <ShieldCheck size={18} />
+              Admin
+            </NavLink>
+          </>
         )}
         <div className="user-box">
           <div className="row between">

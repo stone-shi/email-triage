@@ -27,7 +27,6 @@ export function App() {
           <Route element={<RequirePasswordChanged />}>
             <Route element={<AppShell />}>
               <Route path="/" element={<DashboardPage />} />
-              <Route path="/logs" element={<LogsPage />} />
 
               <Route path="/settings" element={<SettingsLayout />}>
                 <Route index element={<Navigate to="/settings/integrations" replace />} />
@@ -37,6 +36,8 @@ export function App() {
               </Route>
 
               <Route element={<RequireAdmin />}>
+                <Route path="/logs" element={<LogsPage />} />
+
                 <Route path="/admin" element={<AdminLayout />}>
                   <Route index element={<Navigate to="/admin/users" replace />} />
                   <Route path="users" element={<AdminUsersPage />} />

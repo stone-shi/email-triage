@@ -13,6 +13,7 @@ import { AccountSettingsPage } from "./pages/AccountSettingsPage";
 import { AdminLayout } from "./pages/AdminLayout";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AdminSystemSettingsPage } from "./pages/AdminSystemSettingsPage";
+import { AdminPromptsPage } from "./pages/AdminPromptsPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
 export function App() {
@@ -42,6 +43,7 @@ export function App() {
                   <Route index element={<Navigate to="/admin/users" replace />} />
                   <Route path="users" element={<AdminUsersPage />} />
                   <Route path="settings" element={<AdminSystemSettingsPage />} />
+                  <Route path="prompts" element={<AdminPromptsPage />} />
                 </Route>
               </Route>
 

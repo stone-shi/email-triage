@@ -7,6 +7,7 @@ export function AdminLayout() {
       <div className="tab-rail">
         <NavLink to="/admin/users">Users</NavLink>
         <NavLink to="/admin/settings">System settings</NavLink>
+        <NavLink to="/admin/prompts">Prompts</NavLink>
       </div>
       <Outlet />
     </div>

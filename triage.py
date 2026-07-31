@@ -8,6 +8,7 @@ import httpx
 import tiktoken
 from config import settings
 from db import EmailDB
+import prompts_store
 
 logger = logging.getLogger("email_triage.pipeline")
 
@@ -62,7 +63,24 @@ class EmailTriageEngine:
                 self.prompts = {}
         except Exception:
             self.prompts = {}
-            
+
+        # Global, admin-editable overrides from data/app.db win over prompts.yml,
+        # which wins over the hardcoded defaults in each run_level_* method below --
+        # same DB-vs-legacy precedence as every other global setting in this app.
+        # No-op (falls through silently) until data/app.db exists and has been
+        # seeded -- see prompts_store.seed_from_yaml_or_defaults, called once at
+        # SSE server startup.
+        try:
+            import appdb
+
+            if appdb.DEFAULT_APP_DB_PATH.exists():
+                with appdb.get_conn() as conn:
+                    for key, value in prompts_store.get_all_prompts_raw(conn).items():
+                        self.prompts.setdefault(key, {})["system"] = value
+        except Exception:
+            logger.exception("Failed to load DB-backed prompt overrides; using prompts.yml/hardcoded defaults")
+
+
         try:
             self.encoder = tiktoken.get_encoding("cl100k_base")
         except Exception:
@@ -233,16 +251,7 @@ class EmailTriageEngine:
                 
         system_instruction = self.prompts.get("level_1_fast_triage", {}).get("system")
         if not system_instruction:
-            system_instruction = (
-                "You are an expert executive assistant evaluating an email to suggest its triage level.\n"
-                "Output suggested_level as an integer:\n"
-                "0 - pure noise, random promotion, social media notification not directly addressed to user, notification requiring no action.\n"
-                "1 - notification worth reviewing, promotion addressing user (e.g., birthday credit, coupon, free credit).\n"
-                "2 - important, actionable, personal human conversation or critical alert.\n"
-                "You MUST return a valid JSON object containing exactly four fields: "
-                "'suggested_level' (integer: 0, 1, or 2), 'reason' (string explaining the level), 'confidence_score' (float from 0.0 to 1.0), and "
-                "'tag' (a one word lowercase tag, e.g., \"promotion\", \"notification\", \"personal\", \"vip\", \"low\")."
-            )
+            system_instruction = prompts_store.DEFAULT_PROMPTS["level_1_fast_triage"]
         
         url = f"{self.triage_base_url}/chat/completions"
         payload = {
@@ -325,11 +334,7 @@ class EmailTriageEngine:
         prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
         system_instruction = self.prompts.get("level_2_summarization", {}).get("system")
         if not system_instruction:
-            system_instruction = (
-                "Create clear, precise bulleted executive summaries. Be brief and highlight any requested task, conclusion, or deadline. "
-                "You MUST return a valid JSON object containing exactly three fields: 'summary' (string), 'confidence_score' (float from 0.0 to 1.0), "
-                "and 'tag' (a one word lowercase tag, e.g., \"personal\", \"vip\", \"update\")."
-            )
+            system_instruction = prompts_store.DEFAULT_PROMPTS["level_2_summarization"]
         
         url = f"{self.summary_base_url}/chat/completions"
         payload = {
@@ -397,16 +402,7 @@ class EmailTriageEngine:
         prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}\nFull Body Content:\n{full_body[:6000]}"
         system_instruction = self.prompts.get("level_1_premium_escalation", {}).get("system")
         if not system_instruction:
-            system_instruction = (
-                "You are a premium AI operations auditor re-evaluating an ambiguous email triage level query.\n"
-                "Output suggested_level as an integer:\n"
-                "0 - pure noise, random promotion, social media notification not directly addressed to user, notification requiring no action.\n"
-                "1 - notification worth reviewing, promotion addressing user (e.g., birthday credit, coupon, free credit).\n"
-                "2 - important, actionable, personal human conversation or critical alert.\n"
-                "You MUST return a valid JSON object containing exactly four fields: "
-                "'suggested_level' (integer: 0, 1, or 2), 'reason' (string), 'confidence_score' (float from 0.0 to 1.0), and "
-                "'tag' (a one word lowercase tag, e.g., \"personal\", \"vip\", \"promotion\", \"notification\")."
-            )
+            system_instruction = prompts_store.DEFAULT_PROMPTS["level_1_premium_escalation"]
         
         url = f"{self.summary_base_url}/chat/completions"
         payload = {

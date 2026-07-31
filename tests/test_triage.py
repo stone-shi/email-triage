@@ -73,6 +73,27 @@ class TestEmailTriageEngineInit:
         assert engine.summary_headers["Authorization"] == "Bearer summary-key"
 
 
+class TestEmailTriageEnginePromptOverlay:
+    def test_db_prompt_overlay_wins_over_yaml_and_default(self, mock_db, mock_settings, tmp_path, monkeypatch):
+        import appdb
+        import prompts_store
+
+        db_path = tmp_path / "app.db"
+        monkeypatch.setattr(appdb, "DEFAULT_APP_DB_PATH", db_path)
+        appdb.init_app_db(db_path)
+        with appdb.get_conn(db_path) as conn:
+            prompts_store.set_prompt(conn, "level_1_fast_triage", "DB-overridden prompt text")
+
+        engine = EmailTriageEngine(db=mock_db, settings_instance=mock_settings)
+
+        assert engine.prompts["level_1_fast_triage"]["system"] == "DB-overridden prompt text"
+
+    def test_missing_app_db_does_not_raise(self, mock_db, mock_settings):
+        # conftest's _isolate_app_db fixture points DEFAULT_APP_DB_PATH at a
+        # nonexistent file by default -- construction must still succeed.
+        EmailTriageEngine(db=mock_db, settings_instance=mock_settings)
+
+
 class TestLevel0StaticFilter:
     def test_noise_subject_unsubscribe(self, engine):
         is_noise, reason = engine.run_level_0_static("sender@test.com", "Please unsubscribe me")

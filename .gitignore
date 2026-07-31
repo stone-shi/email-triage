@@ -173,6 +173,11 @@ test-reports/
 app.db
 secret.key
 
+# Per-user runtime data (mailbox credentials, cache DBs, local operator config) --
+# bind-mounted at runtime, never part of the app's source. See CLAUDE.md's
+# "Multi-tenant profiles" section.
+/profiles/
+
 # Frontend (web/) -- dist/ is already covered by the generic "dist/" rule above
 web/node_modules/
 *.tsbuildinfo

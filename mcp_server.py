@@ -68,9 +68,11 @@ import account_clients
 import appdb
 import integrations_store as ints
 import mcp_tokens_store
+import prompts_store
 import users_store
 import web_api
 import web_integrations_api
+import web_prompts_api
 import web_static
 from web_auth import CurrentIdentity, error_response, requires_active_user, requires_admin
 
@@ -120,6 +122,7 @@ mcp = RobustFastMCP(
 # see mcp_server.py's module docstring / CLAUDE.md for the cutover plan.
 web_api.register_web_routes(mcp)
 web_integrations_api.register_integrations_routes(mcp)
+web_prompts_api.register_prompts_routes(mcp)
 
 import contextvars
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1546,6 +1549,15 @@ if __name__ == "__main__":
                 logger.warning(
                     "Seeded bootstrap admin user with the default password -- it must be "
                     "changed at first login."
+                )
+            _seeded_prompts = prompts_store.seed_from_yaml_or_defaults(
+                _bootstrap_conn, Path(__file__).parent.resolve() / "prompts.yml"
+            )
+            if _seeded_prompts:
+                logger.info(
+                    "Seeded %d prompt(s) into data/app.db from prompts.yml/hardcoded defaults "
+                    "(admin-edited prompts, if any, were left untouched).",
+                    _seeded_prompts,
                 )
 
         # Load legacy profile token map (fallback for MCP tokens not yet migrated into the DB)

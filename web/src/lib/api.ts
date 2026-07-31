@@ -236,6 +236,23 @@ export const settings = {
 };
 
 // ------------------------------------------------------------------ //
+// Admin: LLM prompts
+// ------------------------------------------------------------------ //
+
+export interface PromptEntry {
+  label: string;
+  description: string;
+  value: string;
+  source: "database" | "prompts.yml" | "default";
+}
+
+export const prompts = {
+  list: () => get<{ prompts: Record<string, PromptEntry> }>("/api/prompts"),
+  update: (key: string, value: string) => put<PromptEntry>(`/api/prompts/${key}`, { value }),
+  reset: (key: string) => post<PromptEntry>(`/api/prompts/${key}/reset`),
+};
+
+// ------------------------------------------------------------------ //
 // Dashboard status / sync / logs
 // ------------------------------------------------------------------ //
 

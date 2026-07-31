@@ -8,6 +8,7 @@ export function AdminLayout() {
         <NavLink to="/admin/users">Users</NavLink>
         <NavLink to="/admin/settings">System settings</NavLink>
         <NavLink to="/admin/prompts">Prompts</NavLink>
+        <NavLink to="/admin/quality">Quality check</NavLink>
       </div>
       <Outlet />
     </div>

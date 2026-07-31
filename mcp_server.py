@@ -69,10 +69,12 @@ import appdb
 import integrations_store as ints
 import mcp_tokens_store
 import prompts_store
+import quality_check
 import users_store
 import web_api
 import web_integrations_api
 import web_prompts_api
+import web_quality_api
 import web_static
 from web_auth import CurrentIdentity, error_response, requires_active_user, requires_admin
 
@@ -123,6 +125,7 @@ mcp = RobustFastMCP(
 web_api.register_web_routes(mcp)
 web_integrations_api.register_integrations_routes(mcp)
 web_prompts_api.register_prompts_routes(mcp)
+web_quality_api.register_quality_routes(mcp)
 
 import contextvars
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1152,6 +1155,30 @@ def _stop_sync(profile: str) -> Dict[str, Any]:
     return {"status": "stop_requested", "profile": profile}
 
 
+# Single process-wide lock (unlike sync's per-profile locks) since one quality-check
+# tick already loops over every profile/account itself -- see run_quality_check_all_profiles.
+_quality_check_lock = threading.Lock()
+
+
+def _start_quality_check_now() -> Dict[str, Any]:
+    """Kicks off a full quality-check pass (every enabled profile/account) in a
+    background thread and returns immediately -- the admin "Run now" button."""
+    if not _quality_check_lock.acquire(blocking=False):
+        return {"status": "skipped", "reason": "a quality check is already in progress"}
+
+    def _run():
+        try:
+            result = quality_check.run_quality_check_all_profiles(force=True)
+            logger.info("Manual quality check run complete: %s", result)
+        except Exception:
+            logger.exception("Manual quality check run failed")
+        finally:
+            _quality_check_lock.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "started"}
+
+
 # =====================================================================
 # TOOLS SECTION
 # =====================================================================
@@ -1504,6 +1531,12 @@ async def api_download_all_start(request: Request) -> Response:
     return JSONResponse(_start_full_download(profile))
 
 
+@mcp.custom_route("/api/quality/run-now", methods=["POST"])
+@requires_admin
+async def api_quality_run_now(request: Request) -> Response:
+    return JSONResponse(_start_quality_check_now())
+
+
 @mcp.custom_route("/api/logs", methods=["GET"])
 @requires_admin
 async def api_logs(request: Request) -> JSONResponse:
@@ -1591,6 +1624,25 @@ if __name__ == "__main__":
                     logger.exception("Background sync scheduler tick failed")
                 await anyio.sleep(interval)
 
+        async def quality_check_scheduler_loop():
+            # Unlike scheduler_loop/download_all_scheduler_loop (fixed-interval), this fires once
+            # a day at a configured wall-clock time -- sleep until the next occurrence of
+            # settings.quality_check.hour:minute (today if still ahead, else tomorrow), run, repeat.
+            from datetime import datetime, timedelta, timezone
+
+            qc = settings.quality_check
+            logger.info("Quality check scheduler enabled (daily at %02d:%02d UTC)", qc.hour, qc.minute)
+            while True:
+                now = datetime.now(timezone.utc)
+                run_at = now.replace(hour=qc.hour, minute=qc.minute, second=0, microsecond=0)
+                if run_at <= now:
+                    run_at += timedelta(days=1)
+                await anyio.sleep((run_at - now).total_seconds())
+                try:
+                    await anyio.to_thread.run_sync(quality_check.run_quality_check_all_profiles)
+                except Exception:
+                    logger.exception("Quality check scheduler tick failed")
+
         async def download_all_scheduler_loop():
             # Sleep first, then run -- unlike scheduler_loop, which fires immediately on startup
             # since a fresh unread-status refresh is cheap and useful right away. A full-mailbox
@@ -1615,6 +1667,10 @@ if __name__ == "__main__":
                     tg.start_soon(download_all_scheduler_loop)
                 else:
                     logger.info("Full-mailbox download scheduler disabled via config.")
+                if settings.quality_check.enabled:
+                    tg.start_soon(quality_check_scheduler_loop)
+                else:
+                    logger.info("Quality check scheduler disabled via config.")
                 # Run the server in the task group's own task (not start_soon) so that once it
                 # returns (e.g. after SIGTERM/SIGINT triggers uvicorn's graceful shutdown), we can
                 # explicitly wind down the scheduler loop too -- otherwise its `while True` never
@@ -1632,4 +1688,6 @@ if __name__ == "__main__":
             logger.info("Background sync scheduler is only supported under SSE transport; skipping under stdio.")
         if settings.download_all_scheduler.enabled:
             logger.info("Full-mailbox download scheduler is only supported under SSE transport; skipping under stdio.")
+        if settings.quality_check.enabled:
+            logger.info("Quality check scheduler is only supported under SSE transport; skipping under stdio.")
         mcp.run(transport=settings.mcp_transport)

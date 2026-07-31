@@ -2,7 +2,7 @@ import sqlite3
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Union
 from config import settings
 
 logger = logging.getLogger("email_triage.db")
@@ -419,6 +419,32 @@ class EmailDB:
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error("Failed to fetch auto-mark-read candidates for %s: %s", account, e)
+            return []
+
+    def get_triaged_messages_in_window(
+        self, account: Union[str, List[str]], start_iso: str, end_iso: str
+    ) -> List[Dict[str, Any]]:
+        """Cached rows already triaged (triage_level set) whose processed_at falls within
+        [start_iso, end_iso) -- the sampling population for the nightly quality check. `account`
+        may be a single account key or a list, so a multi-account user's quality check can pool
+        every account's messages into one query (see quality_check.run_quality_check_for_user)."""
+        accounts = [account] if isinstance(account, str) else list(account)
+        if not accounts:
+            return []
+        try:
+            with self._get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                placeholders = ",".join("?" for _ in accounts)
+                cursor.execute(
+                    f"""SELECT * FROM email_cache
+                        WHERE account IN ({placeholders}) AND triage_level IS NOT NULL
+                          AND processed_at >= ? AND processed_at < ?""",
+                    [*accounts, start_iso, end_iso],
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error("Failed to fetch triaged messages in window for %s: %s", accounts, e)
             return []
 
     def get_email_counts(self, account: Optional[str] = None) -> Dict[str, int]:

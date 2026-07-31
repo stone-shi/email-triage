@@ -14,6 +14,7 @@ import { AdminLayout } from "./pages/AdminLayout";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AdminSystemSettingsPage } from "./pages/AdminSystemSettingsPage";
 import { AdminPromptsPage } from "./pages/AdminPromptsPage";
+import { AdminQualityPage } from "./pages/AdminQualityPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
 export function App() {
@@ -44,6 +45,7 @@ export function App() {
                   <Route path="users" element={<AdminUsersPage />} />
                   <Route path="settings" element={<AdminSystemSettingsPage />} />
                   <Route path="prompts" element={<AdminPromptsPage />} />
+                  <Route path="quality" element={<AdminQualityPage />} />
                 </Route>
               </Route>
 

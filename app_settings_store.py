@@ -74,6 +74,15 @@ RUNTIME_KEYS: Dict[str, SettingSpec] = {
         SettingSpec("auto_mark_read.level_1.after_displays", "int", "auto_mark_read.level_1.after_displays"),
         SettingSpec("auto_mark_read.level_2.enabled", "bool", "auto_mark_read.level_2.enabled"),
         SettingSpec("auto_mark_read.level_2.after_displays", "int", "auto_mark_read.level_2.after_displays"),
+        # Production quality check ("no-look" nightly audit) -- global, admin-only,
+        # like everything else that costs judge-model tokens/spend.
+        SettingSpec("quality_check.enabled", "bool", "quality_check.enabled"),
+        SettingSpec("quality_check.hour", "int", "quality_check.hour"),
+        SettingSpec("quality_check.minute", "int", "quality_check.minute"),
+        SettingSpec("quality_check.sample_rate", "float", "quality_check.sample_rate"),
+        SettingSpec("quality_check.judge_base_url", "str", "quality_check.judge_base_url"),
+        SettingSpec("quality_check.judge_model", "str", "quality_check.judge_model"),
+        SettingSpec("quality_check.judge_api_key", "str", "quality_check.judge_api_key", is_secret=True),
         # Logging / deployment
         SettingSpec("log_level", "str", "log_level"),
         SettingSpec("public_base_url", "str", "public_base_url"),

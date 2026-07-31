@@ -119,6 +119,49 @@ SCHEMA = (
         PRIMARY KEY (user_id, key)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS quality_check_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        account TEXT NOT NULL,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        sample_rate REAL NOT NULL,
+        population_size INTEGER NOT NULL,
+        sample_size INTEGER NOT NULL,
+        judge_model TEXT,
+        level_precision REAL,
+        level_recall REAL,
+        level_f1 REAL,
+        summary_quality_avg REAL,
+        summary_quality_count INTEGER,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        status TEXT NOT NULL DEFAULT 'ok',
+        error TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_quality_check_runs_account ON quality_check_runs(user_id, account, window_end)",
+    "CREATE INDEX IF NOT EXISTS idx_quality_check_runs_window ON quality_check_runs(window_end)",
+    """
+    CREATE TABLE IF NOT EXISTS quality_check_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL REFERENCES quality_check_runs(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL,
+        cached_level INTEGER,
+        judge_level INTEGER,
+        cached_tag TEXT,
+        judge_tag TEXT,
+        agreement INTEGER NOT NULL,
+        cached_summary TEXT,
+        judge_summary TEXT,
+        summary_quality_score REAL,
+        judge_notes TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_quality_check_items_run ON quality_check_items(run_id)",
 )
 
 # (table, column, ddl) added after first release. Empty for now; append here,

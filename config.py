@@ -131,6 +131,29 @@ class AutoMarkReadSettings(BaseModel):
     level_2: AutoMarkReadLevel2Settings = Field(default_factory=AutoMarkReadLevel2Settings)
 
 
+class QualityCheckSettings(BaseModel):
+    """Nightly 'no-look' production quality audit: re-runs a random sample of
+    already-triaged messages through a separately-configured judge LLM and
+    compares the judge's independent decision against what production
+    actually decided, to catch triage/summary drift without a human reading
+    every email. Disabled by default -- it costs judge-model tokens and
+    requires a judge endpoint/model to be configured first."""
+    enabled: bool = Field(
+        default_factory=lambda: os.getenv("EMAIL_TRIAGE_QUALITY_CHECK_ENABLED", "false").strip().lower()
+        not in ("false", "0", "no", "")
+    )
+    hour: int = Field(default_factory=lambda: int(os.getenv("EMAIL_TRIAGE_QUALITY_CHECK_HOUR", "1")))
+    minute: int = Field(default_factory=lambda: int(os.getenv("EMAIL_TRIAGE_QUALITY_CHECK_MINUTE", "0")))
+    sample_rate: float = Field(
+        default_factory=lambda: float(os.getenv("EMAIL_TRIAGE_QUALITY_CHECK_SAMPLE_RATE", "0.10"))
+    )
+    judge_base_url: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_QUALITY_CHECK_JUDGE_BASE_URL", ""))
+    judge_model: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_QUALITY_CHECK_JUDGE_MODEL", ""))
+    judge_api_key: str = Field(
+        default_factory=lambda: os.getenv("EMAIL_TRIAGE_QUALITY_CHECK_JUDGE_API_KEY", "")
+    )
+
+
 class TriageSettings(BaseModel):
     confidence_threshold: float = 0.8
     triage_type: str = "llm"
@@ -190,6 +213,7 @@ class Settings(BaseSettings):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     download_all_scheduler: DownloadAllSchedulerSettings = Field(default_factory=DownloadAllSchedulerSettings)
     auto_mark_read: AutoMarkReadSettings = Field(default_factory=AutoMarkReadSettings)
+    quality_check: QualityCheckSettings = Field(default_factory=QualityCheckSettings)
 
     triage_base_url: str = "https://your-llm-proxy.com/v1"
     summary_base_url: str = "https://your-llm-proxy.com/v1"
@@ -340,6 +364,23 @@ class Settings(BaseSettings):
                         f"EMAIL_TRIAGE_AUTO_MARK_READ_LEVEL_{lvl}_AFTER_DISPLAYS"
                     ):
                         level_settings.after_displays = int(level_data["after_displays"])
+
+                # Map Quality Check section
+                quality_check_data = yaml_data.get("quality_check", {})
+                if "enabled" in quality_check_data and should_apply("EMAIL_TRIAGE_QUALITY_CHECK_ENABLED"):
+                    self.quality_check.enabled = bool(quality_check_data["enabled"])
+                if "hour" in quality_check_data and should_apply("EMAIL_TRIAGE_QUALITY_CHECK_HOUR"):
+                    self.quality_check.hour = int(quality_check_data["hour"])
+                if "minute" in quality_check_data and should_apply("EMAIL_TRIAGE_QUALITY_CHECK_MINUTE"):
+                    self.quality_check.minute = int(quality_check_data["minute"])
+                if "sample_rate" in quality_check_data and should_apply("EMAIL_TRIAGE_QUALITY_CHECK_SAMPLE_RATE"):
+                    self.quality_check.sample_rate = float(quality_check_data["sample_rate"])
+                if "judge_base_url" in quality_check_data and should_apply("EMAIL_TRIAGE_QUALITY_CHECK_JUDGE_BASE_URL"):
+                    self.quality_check.judge_base_url = quality_check_data["judge_base_url"]
+                if "judge_model" in quality_check_data and should_apply("EMAIL_TRIAGE_QUALITY_CHECK_JUDGE_MODEL"):
+                    self.quality_check.judge_model = quality_check_data["judge_model"]
+                if "judge_api_key" in quality_check_data and should_apply("EMAIL_TRIAGE_QUALITY_CHECK_JUDGE_API_KEY"):
+                    self.quality_check.judge_api_key = quality_check_data["judge_api_key"]
 
             except Exception as e:
                 # Fallback gracefully to default initialization strings on error

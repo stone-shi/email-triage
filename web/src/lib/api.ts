@@ -278,4 +278,48 @@ export const logsApi = {
   since: (seq: number) => get<{ logs: { seq: number; line: string }[]; last_seq: number }>(`/api/logs?since=${seq}`),
 };
 
+// ------------------------------------------------------------------ //
+// Admin: production quality check ("no-look" nightly audit)
+// ------------------------------------------------------------------ //
+
+export interface QualityTrendDay {
+  day: string;
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
+  summary_quality_avg: number | null;
+  sample_size: number;
+  run_count: number;
+  error_count: number;
+  no_data_count: number;
+}
+
+export interface QualityRun {
+  id: number;
+  user_id: number;
+  username: string;
+  account: string;
+  window_start: string;
+  window_end: string;
+  sample_rate: number;
+  population_size: number;
+  sample_size: number;
+  judge_model: string | null;
+  level_precision: number | null;
+  level_recall: number | null;
+  level_f1: number | null;
+  summary_quality_avg: number | null;
+  summary_quality_count: number;
+  status: "ok" | "error" | "no_data";
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export const quality = {
+  trend: (days = 7) => get<{ days: QualityTrendDay[] }>(`/api/quality/trend?days=${days}`),
+  runs: (days = 7) => get<{ runs: QualityRun[] }>(`/api/quality/runs?days=${days}`),
+  runNow: () => post<{ status: string; reason?: string }>("/api/quality/run-now"),
+};
+
 export { get, post, patch, put, del };

@@ -225,9 +225,9 @@ class MCPTokenAuthMiddleware:
 
 
 class AppAuthMiddleware:
-    """Guards /sse and /messages/ (the MCP protocol endpoints). Resolves a
-    per-user DB-backed mcp_tokens row first; if data/app.db doesn't exist yet
-    or the token isn't found there, falls back to the legacy .env-scraped
+    """Guards /sse, /messages/, and /mcp (the MCP protocol endpoints). Resolves
+    a per-user DB-backed mcp_tokens row first; if data/app.db doesn't exist
+    yet or the token isn't found there, falls back to the legacy .env-scraped
     EMAIL_TRIAGE_PROFILE_TOKEN map (same lookup MCPTokenAuthMiddleware used)
     so existing MCP clients keep working unmodified until migrate_to_db.py has
     imported their tokens into the database.
@@ -253,6 +253,13 @@ class AppAuthMiddleware:
     already-authenticated session -- the session_id is only ever handed out
     over an SSE stream that itself required a valid token, and the mapping is
     torn down the moment that stream disconnects.
+
+    /mcp (Streamable HTTP, mounted alongside /sse -- see mcp_server.py's
+    __main__) doesn't need that same fallback: unlike SSE, every request a
+    client makes -- the initial one and all follow-ups -- goes to the exact
+    same URL, so a client that's configured to send a token at all sends it
+    on every request. It's therefore just required outright, same as the
+    original (pre-session-fallback) behavior for /sse.
     """
 
     def __init__(self, app, token_map: Dict[str, str]):
@@ -267,7 +274,7 @@ class AppAuthMiddleware:
             headers = Headers(scope=scope)
             path = scope.get("path", "")
 
-            if path.startswith("/sse") or path.startswith("/messages"):
+            if path.startswith("/sse") or path.startswith("/messages") or path.startswith("/mcp"):
                 token = None
                 auth_header = headers.get("authorization")
                 if auth_header and auth_header.lower().startswith("bearer "):
@@ -280,7 +287,6 @@ class AppAuthMiddleware:
 
                 profile = self._resolve_profile(token)
 
-                session_id = None
                 is_messages = path.startswith("/messages")
                 if is_messages:
                     query_params = QueryParams(scope.get("query_string", b"").decode("utf-8"))
@@ -306,7 +312,7 @@ class AppAuthMiddleware:
 
                 send_for_app = send
                 new_session_ids: List[str] = []
-                if not is_messages:
+                if path.startswith("/sse"):
                     # This is the GET /sse connection: watch its outgoing body for the
                     # SDK's "endpoint" event, which is the only place session_id is
                     # ever minted, and remember which profile authenticated it.
@@ -351,6 +357,40 @@ class AppAuthMiddleware:
         # exactly as the middleware it replaces did.
         self.token_map = load_token_profile_map()
         return self.token_map.get(token)
+
+
+def build_http_app():
+    """Builds the combined Starlette app served under SSE transport mode: the
+    legacy /sse + /messages/ endpoints plus Streamable HTTP at /mcp, both
+    backed by the same underlying MCP server session loop, so either kind of
+    client can connect without any config change on our end. Does not attach
+    AppAuthMiddleware -- callers add that (with whatever token_map they have)
+    themselves, same as they add any other middleware.
+
+    Note: `mcp` is a process-wide singleton, and the StreamableHTTPSessionManager
+    it lazily creates on first call to streamable_http_app() can only have its
+    run() lifespan entered once per instance (the SDK raises RuntimeError on a
+    second attempt) -- fine for a real server process (this is called exactly
+    once), but tests that call this more than once must reset
+    `mcp._session_manager = None` first to get a fresh one."""
+    app = mcp.sse_app()
+
+    # streamable_http_app() builds its own Starlette app (and, as a side effect,
+    # lazily creates mcp's StreamableHTTPSessionManager); we only need its /mcp
+    # route. Inserted right after the native /sse + /messages/ routes (indices
+    # 0-1) so it can't be shadowed by the SPA catch-all mounted among the custom
+    # routes that follow.
+    streamable_app = mcp.streamable_http_app()
+    streamable_route = next(
+        r for r in streamable_app.routes if getattr(r, "path", None) == mcp.settings.streamable_http_path
+    )
+    app.router.routes.insert(2, streamable_route)
+    # StreamableHTTPSessionManager requires its run() context to be active for the
+    # life of the app (it starts a task group used by every /mcp request) -- same
+    # pattern FastMCP's own streamable_http_app() wires up internally.
+    app.router.lifespan_context = lambda app: mcp.session_manager.run()
+
+    return app
 
 
 # Lazy initializers to ensure files are resolved within their active contexts
@@ -1646,8 +1686,8 @@ if __name__ == "__main__":
         masked_map = {k[:4] + "...": v for k, v in token_map.items()}
         logger.info("Starting SSE MCP server. Loaded legacy profile token mappings: %s", masked_map)
 
-        # Get the standard FastMCP SSE Starlette app
-        app = mcp.sse_app()
+        # Get the combined SSE (/sse, /messages/) + Streamable HTTP (/mcp) Starlette app
+        app = build_http_app()
 
         # Add token validation middleware (DB-backed mcp_tokens, falling back to the legacy map)
         app.add_middleware(AppAuthMiddleware, token_map=token_map)

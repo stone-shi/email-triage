@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OpenClaw mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1400px; height: 900px; background: #dbe3ee; font-family: 'Inter', sans-serif; }
+  .stage { width: 1400px; height: 900px; display: flex; align-items: center; justify-content: center; }
+
+  .window {
+    width: 1280px; height: 800px; border-radius: 14px; overflow: hidden;
+    box-shadow: 0 30px 60px rgba(15, 23, 42, 0.28), 0 4px 12px rgba(15,23,42,0.12);
+    display: flex; flex-direction: column; background: #ffffff;
+  }
+  .titlebar {
+    height: 44px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0;
+    display: flex; align-items: center; padding: 0 16px; gap: 8px; flex-shrink: 0;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.r { background: #f87171; } .dot.y { background: #fbbf24; } .dot.g { background: #34d399; }
+  .titlebar .app-name { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: #64748b; margin-right: 60px; }
+
+  .body { flex: 1; display: flex; overflow: hidden; }
+
+  .sidebar { width: 260px; background: #0f172a; color: #cbd5e1; display: flex; flex-direction: column; padding: 18px 14px; flex-shrink: 0; }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; padding: 0 4px; }
+  .brand .mark { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, #38bdf8, #6366f1); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: white; }
+  .brand .name { font-weight: 700; font-size: 16px; color: #f1f5f9; letter-spacing: -0.01em; }
+  .new-chat { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: #e2e8f0; font-size: 13px; font-weight: 600; padding: 10px 12px; border-radius: 9px; margin-bottom: 18px; }
+  .side-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; margin: 6px 4px; font-weight: 600; }
+  .side-item { font-size: 13px; color: #94a3b8; padding: 9px 10px; border-radius: 8px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .side-item.active { background: rgba(56, 189, 248, 0.14); color: #e0f2fe; font-weight: 600; }
+  .side-footer { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px; border-top: 1px solid rgba(255,255,255,0.08); }
+  .avatar { width: 26px; height: 26px; border-radius: 50%; background: #334155; display:flex;align-items:center;justify-content:center; font-size: 11px; font-weight: 700; color: #cbd5e1; }
+  .side-footer .who { font-size: 12.5px; color: #cbd5e1; }
+  .side-footer .sub { font-size: 10.5px; color: #64748b; }
+
+  .chat { flex: 1; display: flex; flex-direction: column; background: #f8fafc; }
+  .messages { flex: 1; padding: 28px 40px; display: flex; flex-direction: column; gap: 18px; overflow: hidden; }
+
+  .row { display: flex; gap: 12px; max-width: 780px; }
+  .row.user { align-self: flex-end; flex-direction: row-reverse; }
+  .bubble-avatar { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .bubble-avatar.user { background: #2563eb; color: white; }
+  .bubble-avatar.assistant { background: linear-gradient(135deg, #38bdf8, #6366f1); color: white; }
+
+  .bubble { border-radius: 14px; padding: 13px 16px; font-size: 14.5px; line-height: 1.55; }
+  .bubble.user { background: #2563eb; color: white; border-top-right-radius: 4px; }
+  .bubble.assistant { background: #ffffff; border: 1px solid #e2e8f0; color: #1e293b; border-top-left-radius: 4px; box-shadow: 0 1px 2px rgba(15,23,42,0.03); }
+
+  .tool-card { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 15px; max-width: 780px; margin-left: 42px; }
+  .tool-card .head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: #475569; }
+  .tool-card .head .icon { width: 18px; height: 18px; border-radius: 5px; background: #e2e8f0; display:flex;align-items:center;justify-content:center; font-size: 11px; }
+  .tool-card .head .check { margin-left: auto; color: #059669; font-size: 12px; font-weight: 700; display:flex; align-items:center; gap:4px; }
+  .tool-card code.call { display: block; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: #1d4ed8; background: #e8effe; padding: 7px 10px; border-radius: 7px; }
+  .tool-card .result { margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #475569; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 7px; padding: 8px 10px; white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+
+  .bubble ul { margin: 8px 0 0 18px; }
+  .bubble li { margin-bottom: 4px; }
+  .tag-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: #fffbeb; color: #d97706; margin-left: 4px; }
+  .tag-badge.personal { background: #eff6ff; color: #2563eb; }
+
+  .composer { padding: 18px 40px 24px; }
+  .input-pill { display: flex; align-items: center; gap: 10px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 999px; padding: 12px 10px 12px 20px; box-shadow: 0 1px 3px rgba(15,23,42,0.06); }
+  .input-pill .placeholder { flex: 1; font-size: 14px; color: #94a3b8; }
+  .send-btn { width: 34px; height: 34px; border-radius: 50%; background: #2563eb; display: flex; align-items: center; justify-content: center; color: white; font-size: 15px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="window">
+    <div class="titlebar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="app-name">OpenClaw</div>
+    </div>
+    <div class="body">
+      <div class="sidebar">
+        <div class="brand"><div class="mark">OC</div><div class="name">OpenClaw</div></div>
+        <div class="new-chat">+ New chat</div>
+        <div class="side-section-label">Recent</div>
+        <div class="side-item active">Unread inbox check-in</div>
+        <div class="side-item">Draft reply to Acme Corp</div>
+        <div class="side-item">Weekly triage summary</div>
+        <div class="side-item">Zoho sync troubleshooting</div>
+        <div class="side-footer">
+          <div class="avatar">JS</div>
+          <div>
+            <div class="who">jenny</div>
+            <div class="sub">Connected via MCP</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat">
+        <div class="messages">
+          <div class="row user">
+            <div class="bubble-avatar user">J</div>
+            <div class="bubble user">Do I have any important unread emails today?</div>
+          </div>
+
+          <div class="tool-card">
+            <div class="head">
+              <div class="icon">🔧</div>
+              <span>email-triage · MCP tool call</span>
+              <span class="check">✓ done · 0.4s</span>
+            </div>
+            <code class="call">fetch_and_process_unread(max_per_source=5, days=1, profile="jenny")</code>
+            <div class="result">{"level": 2, "sender": "legal@acmecorp.com", "subject": "Contract renewal - signature needed by Fri", "tag": "personal", "confidence": 0.94}
+{"level": 2, "sender": "alerts@monitoring.io", "subject": "Prod API error rate above threshold", "tag": "vip", "confidence": 0.97}
+… 3 more cached, level 0/1 (already filtered)</div>
+          </div>
+
+          <div class="row">
+            <div class="bubble-avatar assistant">AI</div>
+            <div class="bubble assistant">
+              Yes — 2 emails need your attention, already pulled from the local cache (no re-processing needed):
+              <ul>
+                <li><strong>Contract renewal</strong> from legal@acmecorp.com — signature needed by Friday<span class="tag-badge personal">personal · 0.94</span></li>
+                <li><strong>Prod API error rate alert</strong> from alerts@monitoring.io<span class="tag-badge">vip · 0.97</span></li>
+              </ul>
+              Everything else in your unread queue was already triaged as low-priority. Want me to draft a reply to either one?
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="input-pill">
+            <span class="placeholder">Message OpenClaw…</span>
+            <div class="send-btn">➤</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

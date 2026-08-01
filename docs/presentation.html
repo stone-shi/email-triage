@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Email Triage Engine — Architecture Overview</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --panel-muted: #f1f5f9;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --accent-tint: #eff6ff;
+    --success: #059669;
+    --success-tint: #ecfdf5;
+    --warning: #d97706;
+    --warning-tint: #fffbeb;
+    --danger: #dc2626;
+    --danger-tint: #fef2f2;
+    --radius: 14px;
+    --radius-sm: 8px;
+    --shadow: 0 8px 24px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow: hidden;
+  }
+  .slide-deck {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  @media (min-width: 769px) {
+    .slide-deck {
+      max-width: calc(100vh * 16 / 9);
+      max-height: calc(100vw * 9 / 16);
+      margin: auto;
+      position: absolute;
+      inset: 0;
+    }
+  }
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: left;
+    padding: 56px 72px;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.35s ease;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .slide.active { opacity: 1; visibility: visible; }
+  .slide-content { width: 100%; max-width: 1100px; max-height: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-tint);
+    padding: 6px 14px; border-radius: 999px; width: fit-content;
+  }
+  h1 { font-size: clamp(30px, 4.2vw, 46px); font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; }
+  h2 { font-size: clamp(22px, 3vw, 30px); font-weight: 700; letter-spacing: -0.01em; }
+  h3 { font-size: 16px; font-weight: 700; }
+  p, li { font-size: clamp(14px, 1.5vw, 17px); line-height: 1.55; color: var(--text-secondary); }
+  strong { color: var(--text); font-weight: 600; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: var(--panel-muted); padding: 1px 6px; border-radius: 5px; color: var(--accent-dark); }
+  .muted { color: var(--text-secondary); }
+  .lede { font-size: clamp(16px, 1.8vw, 19px); color: var(--text-secondary); max-width: 780px; }
+
+  .title-slide { align-items: center; text-align: center; background: linear-gradient(180deg, #ffffff 0%, #eff6ff 100%); }
+  .title-slide .slide-content { align-items: center; }
+  .logo-mark { width: 64px; height: 64px; border-radius: 16px; background: var(--accent); display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
+  .title-slide h1 { font-size: clamp(36px, 6vw, 58px); }
+  .badge-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .pill { font-size: 13px; font-weight: 600; color: var(--text-secondary); background: var(--panel); border: 1px solid var(--border); padding: 7px 14px; border-radius: 999px; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; box-shadow: var(--shadow); }
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+  /* pipeline flow diagram */
+  .pipeline { display: flex; align-items: stretch; gap: 0; width: 100%; }
+  .pipe-stage {
+    flex: 1; background: var(--panel); border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+    padding: 14px 12px; text-align: center; position: relative; display: flex; flex-direction: column; gap: 4px; justify-content: center;
+    min-height: 92px;
+  }
+  .pipe-stage.free { border-color: var(--success); background: var(--success-tint); }
+  .pipe-stage.cheap { border-color: var(--accent); background: var(--accent-tint); }
+  .pipe-stage.premium { border-color: var(--warning); background: var(--warning-tint); }
+  .pipe-stage .stage-num { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .04em; }
+  .pipe-stage .stage-name { font-size: 14px; font-weight: 700; color: var(--text); }
+  .pipe-stage .stage-note { font-size: 11.5px; color: var(--text-secondary); }
+  .pipe-arrow { display: flex; align-items: center; justify-content: center; width: 28px; color: var(--text-secondary); font-size: 18px; flex-shrink: 0; }
+
+  .flow-vertical { display: flex; flex-direction: column; gap: 0; }
+  .flow-step { display: flex; align-items: center; gap: 16px; }
+  .flow-dot { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+  .flow-box { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; }
+  .flow-connector { width: 34px; display: flex; justify-content: center; }
+  .flow-connector::after { content: ''; width: 2px; height: 26px; background: var(--border); }
+
+  .legend-row { display: flex; gap: 18px; font-size: 12.5px; color: var(--text-secondary); flex-wrap: wrap; }
+  .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  table.spec { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.spec th { text-align: left; color: var(--text-secondary); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  table.spec td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+  table.spec tr:last-child td { border-bottom: none; }
+
+  .anchor-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; font-size: 13px; font-style: italic; color: var(--text-secondary); }
+  .anchor-card.important { border-left: 4px solid var(--warning); }
+  .anchor-card.noise { border-left: 4px solid var(--text-secondary); }
+
+  .metric-tile { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; text-align: center; }
+  .metric-tile .num { font-size: 28px; font-weight: 800; color: var(--accent); }
+  .metric-tile .label { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+
+  .chart-wrap { width: 100%; height: clamp(180px, 30vh, 260px); }
+
+  .foot-note { font-size: 12px; color: var(--text-secondary); border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 4px; }
+
+  /* Navigation */
+  .progress-bar { position: fixed; top: 0; left: 0; height: 3px; background: var(--accent); transition: width 0.3s; z-index: 1000; }
+  .nav-controls { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 18px; z-index: 1000; }
+  .nav-btn { background: var(--panel); border: 1px solid var(--border); color: var(--text); width: 38px; height: 38px; border-radius: 50%; cursor: pointer; font-size: 16px; box-shadow: var(--shadow); }
+  .nav-btn:hover { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
+  .slide-counter { color: var(--text-secondary); font-size: 13px; font-weight: 600; background: var(--panel); border: 1px solid var(--border); padding: 6px 12px; border-radius: 999px; }
+
+  @media (max-width: 768px) {
+    .slide { padding: 32px 24px; }
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .pipeline { flex-direction: column; }
+    .pipe-arrow { transform: rotate(90deg); width: auto; height: 20px; }
+  }
+</style>
+</head>
+<body>
+  <div class="progress-bar" id="progressBar"></div>
+  <div class="slide-deck">
+
+    <!-- 1: TITLE -->
+    <div class="slide title-slide active">
+      <div class="slide-content">
+        <div class="logo-mark">
+          <svg width="32" height="32" viewBox="0 0 32 32"><rect x="6" y="9" width="20" height="14" rx="2" fill="none" stroke="#fff" stroke-width="2"/><path d="M7 10.5 L16 17 L25 10.5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h1>Email Triage Engine</h1>
+        <p class="lede" style="text-align:center;">A token-efficient, multi-stage pipeline that filters noise for free, classifies the rest with a cheap model, and reserves premium LLM calls for the handful of emails that actually matter.</p>
+        <div class="badge-row">
+          <span class="pill">Tiered triage pipeline</span>
+          <span class="pill">Reranker-based routing</span>
+          <span class="pill">Nightly quality audits</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2: THE PROBLEM -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">The problem</span>
+        <h2>You can't afford to run every email through a premium LLM</h2>
+        <p class="lede">A naive pipeline sends every unread message's full body to a summarization model. Most inbox volume is noise — but the cost and latency scale with total volume, not with what's actually important.</p>
+        <div class="grid grid-2" style="margin-top:8px;">
+          <div class="card">
+            <h3 style="color:var(--danger);">Naive approach</h3>
+            <p style="margin-top:6px;">1,000 unread emails → 1,000 full-body fetches → 1,000 premium LLM calls, every single sync.</p>
+          </div>
+          <div class="card">
+            <h3 style="color:var(--success);">Tiered approach</h3>
+            <p style="margin-top:6px;">1,000 unread emails → most resolved for free or by a cheap model → only the truly important ones ever reach the premium summarizer.</p>
+          </div>
+        </div>
+        <p class="foot-note">Every processed message is cached by Message-ID — so re-running the pipeline on mail it's already seen costs zero additional tokens.</p>
+      </div>
+    </div>
+
+    <!-- 3: PIPELINE OVERVIEW -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">The solution</span>
+        <h2>Escalating tiers — cheapest checks run first</h2>
+        <p>Every unread email is evaluated in order until a level is decided. Each later stage costs more tokens and latency, so it only ever runs on whatever the cheaper stages couldn't confidently resolve.</p>
+        <div class="pipeline" style="margin-top: 10px;">
+          <div class="pipe-stage free"><div class="stage-num">Stage 0</div><div class="stage-name">Static filter</div><div class="stage-note">regex / blacklist — free</div></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-stage cheap"><div class="stage-num">Stage 0.5</div><div class="stage-name">Reranker router</div><div class="stage-note">semantic score — cheap</div></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-stage cheap"><div class="stage-num">Stage 1</div><div class="stage-name">LLM classify</div><div class="stage-note">ternary decision — cheap</div></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-stage premium"><div class="stage-num">Stage 2</div><div class="stage-name">Premium summary</div><div class="stage-note">full body — expensive</div></div>
+        </div>
+        <div class="legend-row" style="margin-top:4px;">
+          <span><span class="legend-dot" style="background:var(--success-tint); border:1px solid var(--success);"></span>Free</span>
+          <span><span class="legend-dot" style="background:var(--accent-tint); border:1px solid var(--accent);"></span>Cheap</span>
+          <span><span class="legend-dot" style="background:var(--warning-tint); border:1px solid var(--warning);"></span>Premium, rare</span>
+        </div>
+        <p class="foot-note">A VIP-sender bypass and a low-confidence escalation safety net sit alongside this main line — covered next.</p>
+      </div>
+    </div>
+
+    <!-- 4: VIP + LEVEL 0 -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Stage 0</span>
+        <h2>VIP bypass &amp; the static noise filter</h2>
+        <div class="grid grid-2" style="margin-top: 6px;">
+          <div class="card">
+            <h3>VIP bypass</h3>
+            <p style="margin-top:6px;">If the sender matches <code>whitelist_vip_senders</code>, skip straight to Stage 2 — full body fetch and a premium summary. No triage decision needed for people who always matter.</p>
+          </div>
+          <div class="card">
+            <h3>Level 0 — static, free</h3>
+            <p style="margin-top:6px;">Regex/substring match against <code>blacklist_keywords</code> / <code>blacklist_senders</code>, unless the sender's domain is explicitly whitelisted. A hit tags the message <strong>low / level 0</strong> — no network call, no LLM call.</p>
+          </div>
+        </div>
+        <div class="card" style="margin-top: 4px;">
+          <h3>Example blacklist keywords</h3>
+          <p style="margin-top:6px;"><code>unsubscribe</code> · <code>newsletter</code> · <code>promotions</code> · <code>marketing</code> · <code>no-reply</code> · <code>noreply</code> · <code>digest</code> · <code>advertisement</code></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5: TEI / RERANKER MECHANICS -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Stage 0.5 — deep dive</span>
+        <h2>How the reranker router actually works</h2>
+        <p>Not an LLM call — a semantic <strong>reranker</strong> (a Cohere/Jina-style <code>/rerank</code> endpoint) scores each email's relevance against two fixed "anchor" documents representing the concepts of importance and noise.</p>
+        <div class="grid grid-2" style="margin-top: 4px;">
+          <div class="anchor-card important">"An urgent personal message from a specific person requiring your direct reply, decision, or action, such as a work request, deadline, bill, or critical account issue."</div>
+          <div class="anchor-card noise">"An automated system notification, media download alert, promotional marketing email, newsletter, or subscription update that does not require any reply or action from you."</div>
+        </div>
+        <div class="flow-vertical" style="margin-top: 10px;">
+          <div class="flow-step">
+            <div class="flow-dot">1</div>
+            <div class="flow-box"><strong>Build the query</strong> — <code>From: {sender} | Subject: {subject} | Snippet: {snippet}</code></div>
+          </div>
+          <div class="flow-connector"></div>
+          <div class="flow-step">
+            <div class="flow-dot">2</div>
+            <div class="flow-box"><strong>Call the reranker</strong> — <code>POST /rerank {"model", "query", "documents": [important, noise]}</code> → <code>{"results": [{"index", "relevance_score"}]}</code></div>
+          </div>
+          <div class="flow-connector"></div>
+          <div class="flow-step">
+            <div class="flow-dot">3</div>
+            <div class="flow-box"><strong>Route on thresholds</strong> — importance ≥ <code>0.95</code> and ≥ noise → Level 2 · noise ≥ <code>0.999</code> and &gt; importance → Level 0 · otherwise → fall through to Level 1</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6: LEVEL 1 -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Stage 1</span>
+        <h2>Cheap LLM ternary classification</h2>
+        <p>Sends only <strong>From / Subject / Snippet</strong> — never the full body — to a cheap model (e.g. a flash-tier DeepSeek model) via an OpenAI-compatible <code>/chat/completions</code> proxy, expecting a strict JSON decision.</p>
+        <div class="card" style="margin-top:6px;">
+          <h3>TriageDecision schema</h3>
+          <table class="spec" style="margin-top:8px;">
+            <tr><th>Field</th><th>Meaning</th></tr>
+            <tr><td><code>suggested_level</code></td><td>0 (noise) · 1 (notification) · 2 (important)</td></tr>
+            <tr><td><code>reason</code></td><td>short natural-language justification</td></tr>
+            <tr><td><code>confidence_score</code></td><td>0.0 – 1.0</td></tr>
+            <tr><td><code>tag</code></td><td>one-word classification, e.g. <code>promotion</code>, <code>personal</code>, <code>vip</code></td></tr>
+          </table>
+        </div>
+        <p class="foot-note">The same rerank-based classifier from Stage 0.5 can also stand in here (<code>triage_type: "tei"</code>) instead of an LLM call, for accounts that don't need Stage 1's nuance.</p>
+      </div>
+    </div>
+
+    <!-- 7: ESCALATION + LEVEL 2 -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Safety net &amp; Stage 2</span>
+        <h2>Ambiguity escalation, then the premium summary</h2>
+        <div class="grid grid-2" style="margin-top:6px;">
+          <div class="card">
+            <h3>Ambiguity escalation</h3>
+            <p style="margin-top:6px;">If Stage 1's <code>confidence_score</code> falls below <code>confidence_threshold</code> (default <strong>0.8</strong>), the full body is fetched and re-evaluated by the <strong>premium</strong> model — a rare safety net, not the normal path.</p>
+          </div>
+          <div class="card">
+            <h3>Level 2 — premium summarization</h3>
+            <p style="margin-top:6px;">Only for messages that land here: full body → premium model → a bulleted executive summary, plus its own confidence score and tag.</p>
+          </div>
+        </div>
+        <div class="card" style="margin-top:4px;">
+          <h3>SummaryResult schema</h3>
+          <p style="margin-top:6px;"><code>summary</code> (string) · <code>confidence_score</code> (0.0–1.0) · <code>tag</code> (e.g. <code>vip</code>)</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 8: CACHING -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Cost control</span>
+        <h2>Cache everything — pay for a message exactly once</h2>
+        <p>Every processed message is keyed by its RFC <strong>Message-ID</strong> in a SQLite <code>email_cache</code> table: triage level, tag, reason, score, summary, and per-stage token/duration metrics.</p>
+        <div class="grid grid-3" style="margin-top:6px;">
+          <div class="metric-tile"><div class="num">0</div><div class="label">tokens spent re-processing an already-cached message</div></div>
+          <div class="metric-tile"><div class="num">1</div><div class="label">row per message, updated in place as it moves through stages</div></div>
+          <div class="metric-tile"><div class="num">2</div><div class="label">write phases — download (metadata/body) and triage (decision)</div></div>
+        </div>
+        <p class="foot-note">A row can exist before triage runs (metadata downloaded, not yet classified) — "processed" specifically means <code>triage_level IS NOT NULL</code>, not just "row exists".</p>
+      </div>
+    </div>
+
+    <!-- 9: QUALITY CHECK INTRO -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Production quality check</span>
+        <h2>How do you know accuracy holds — without reading every email?</h2>
+        <p class="lede">Cheap models drift silently. A nightly "no-look" audit samples already-triaged mail, has a separate <strong>judge</strong> model independently re-decide, and compares the two — no human has to read anything.</p>
+        <div class="grid grid-2" style="margin-top:8px;">
+          <div class="card">
+            <h3>Stratified sampling</h3>
+            <p style="margin-top:6px;">Sampled per triage level (0/1/2), not as one flat draw — so a small sample rate can't miss an entire level by chance. Pooled across a user's accounts so a low-volume mailbox isn't rounded to zero.</p>
+          </div>
+          <div class="card">
+            <h3>Example — 10% sample rate</h3>
+            <p style="margin-top:6px;">24h window: <strong>20</strong> level-0 + <strong>50</strong> level-1 + <strong>30</strong> level-2 emails<br>→ sampled: <strong>2</strong> + <strong>5</strong> + <strong>3</strong> — matching each level's share, minimum 1.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 10: QUALITY CHECK FLOW + METRICS -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Production quality check</span>
+        <h2>Judge, compare, measure</h2>
+        <div class="pipeline" style="margin-top: 4px;">
+          <div class="pipe-stage cheap"><div class="stage-name">Sample</div><div class="stage-note">stratified by level, pooled across accounts</div></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-stage premium"><div class="stage-name">Judge model</div><div class="stage-note">independent re-classification</div></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-stage cheap"><div class="stage-name">Compare</div><div class="stage-note">judge vs. cached production result</div></div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-stage free"><div class="stage-name">Metrics</div><div class="stage-note">stored + trended nightly</div></div>
+        </div>
+        <div class="grid grid-2" style="margin-top: 10px;">
+          <div class="card">
+            <h3>Precision / Recall / F1</h3>
+            <p style="margin-top:6px;">Macro-averaged over levels {0, 1, 2} — the judge's re-derived level is treated as ground truth, production's cached level as the prediction being evaluated.</p>
+          </div>
+          <div class="card">
+            <h3>Summary quality</h3>
+            <p style="margin-top:6px;">For messages production actually summarized, the judge grades that summary 1–10 on <strong>accuracy</strong>, <strong>conciseness</strong>, and <strong>actionability</strong>.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 11: DASHBOARD -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Admin dashboard</span>
+        <h2>7-day quality trend, at a glance</h2>
+        <p>Runs nightly (default 01:00 UTC), on-demand via <strong>Run now</strong>, or backfilled historically with a standalone script. Every run is logged so "nothing ran" is never confused with "it ran and failed".</p>
+        <div class="card" style="margin-top: 4px;">
+          <div class="chart-wrap"><canvas id="qualityChart"></canvas></div>
+          <p class="foot-note">Illustrative example — F1 (vs. judge) and summary quality, trended over a week.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 12: INTERFACES OVERVIEW -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Interfaces</span>
+        <h2>Three ways to talk to the pipeline</h2>
+        <p>The same tiered engine underneath — <code>main.py</code> and <code>mcp_server.py</code> share the same triage primitives — is exposed three different ways depending on who (or what) is asking.</p>
+        <div class="grid grid-3" style="margin-top: 6px;">
+          <div class="card">
+            <h3>CLI</h3>
+            <p style="margin-top:6px;"><code>main.py</code> / <code>email-triage.sh</code> — silent JSON-array output by default, built for piping into other tooling. <code>--human</code> for a rich terminal UI, <code>--level 2 --compact</code> for a minified schema tuned for LLM agent consumption.</p>
+          </div>
+          <div class="card">
+            <h3>MCP server</h3>
+            <p style="margin-top:6px;"><code>mcp_server.py</code> — Model Context Protocol server for AI agents/editors. <code>stdio</code> transport for local tools (e.g. Claude Desktop); <code>SSE</code>/HTTP transport for a long-running deployment with the background scheduler and dashboard.</p>
+          </div>
+          <div class="card">
+            <h3>Dashboard</h3>
+            <p style="margin-top:6px;">A Vite + React SPA — login, per-account sync controls, token usage, integrations, admin settings, and the quality-check trend — talking to the same Starlette routes the MCP server exposes.</p>
+          </div>
+        </div>
+        <p class="foot-note">MCP access is per-user, token-based (issued at <code>/api/me/mcp-tokens</code>); the dashboard uses cookie sessions. Both are gated behind the same DB-backed user accounts.</p>
+      </div>
+    </div>
+
+    <!-- 13: MCP TOOL LIST -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">MCP server</span>
+        <h2>What an AI agent can actually call</h2>
+        <p>Eight tools, split between reading cached state (free) and taking action (mutates a mailbox or triggers a live sync).</p>
+        <div class="grid grid-2" style="margin-top: 4px;">
+          <div class="card">
+            <h3>Read-only</h3>
+            <table class="spec" style="margin-top:8px;">
+              <tr><th>Tool</th><th>What it does</th></tr>
+              <tr><td><code>fetch_and_process_unread</code></td><td>Cached triage/summaries for unread mail — reads the local cache only, zero token cost</td></tr>
+              <tr><td><code>search_emails</code></td><td>Live Gmail/IMAP search, enriched with cached triage status and summaries</td></tr>
+              <tr><td><code>get_last_download_time</code></td><td>Per-account sync freshness, so a caller can judge how stale the cache is</td></tr>
+            </table>
+          </div>
+          <div class="card">
+            <h3>Actions</h3>
+            <table class="spec" style="margin-top:8px;">
+              <tr><th>Tool</th><th>What it does</th></tr>
+              <tr><td><code>trigger_download</code></td><td>Forces an immediate sync + triage right now, instead of waiting for the scheduler</td></tr>
+              <tr><td><code>mark_emails_as_read</code></td><td>By triage level, a specific message, or all — remotely and in the cache</td></tr>
+              <tr><td><code>create_new_draft</code></td><td>Creates a new draft (Gmail or IMAP)</td></tr>
+              <tr><td><code>create_draft_reply</code></td><td>Drafts a reply to an existing email</td></tr>
+              <tr><td><code>send_email_reply</code></td><td>Sends a reply directly, no draft step</td></tr>
+            </table>
+          </div>
+        </div>
+        <p class="foot-note">Tool names are fuzzy-matched against <code>email_triage__</code>/<code>email-triage__</code>-prefixed or truncated calls, since some MCP hosts mangle the names they were given.</p>
+      </div>
+    </div>
+
+    <!-- 14: MCP CLIENT IN THE WILD -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">MCP in the wild</span>
+        <h2>Any MCP-compatible client can drive this</h2>
+        <p>Point a client like <strong>OpenClaw</strong> at the SSE endpoint with a per-user token (issued from <code>/api/me/mcp-tokens</code>), and it gets the same 8 tools an editor or custom agent would — including cached, zero-token-cost reads like <code>fetch_and_process_unread</code>.</p>
+        <div class="card" style="padding: 10px; margin-top: 4px; width: fit-content; max-width: 100%; align-self: center;">
+          <img src="assets/openclaw_conversation.png" alt="Illustrative mockup of an OpenClaw-style conversation calling the fetch_and_process_unread MCP tool" style="display:block; border-radius: 10px; height: min(46vh, 430px); width: auto; max-width: 100%; object-fit: contain;">
+        </div>
+        <p class="foot-note">Illustrative mockup UI, not an actual OpenClaw screenshot — built to show the shape of a real tool-call exchange (request → cached result → synthesized answer).</p>
+      </div>
+    </div>
+
+    <!-- 15: ARCHITECTURE RECAP -->
+    <div class="slide">
+      <div class="slide-content">
+        <span class="kicker">Under the hood</span>
+        <h2>Architecture at a glance</h2>
+        <div class="grid grid-2" style="margin-top: 6px;">
+          <div class="card">
+            <h3>Ingestion &amp; pipeline</h3>
+            <p style="margin-top:6px;">Gmail API + Zoho/IMAP (XOAUTH2), concurrent per account. CLI (<code>main.py</code>) and MCP server (<code>mcp_server.py</code>, FastMCP) share the same tiered pipeline primitives.</p>
+          </div>
+          <div class="card">
+            <h3>Storage</h3>
+            <p style="margin-top:6px;">SQLite throughout — a per-user <code>email_cache.db</code>, plus a shared <code>app.db</code> for users, sessions, integrations, settings, and quality-check history.</p>
+          </div>
+          <div class="card">
+            <h3>Multi-tenant</h3>
+            <p style="margin-top:6px;">DB-backed accounts with real login, per-user multi-account Gmail/Zoho/IMAP OAuth integrations, and per-user MCP tokens for agent access.</p>
+          </div>
+          <div class="card">
+            <h3>Dashboard</h3>
+            <p style="margin-top:6px;">A Vite + React SPA — sync controls, token usage, and the quality-check trend — talking to the same Starlette routes the MCP server exposes.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 16: CLOSING -->
+    <div class="slide title-slide">
+      <div class="slide-content">
+        <h2 style="font-size: clamp(24px, 3.6vw, 34px);">Cheap checks first.<br>Premium only where it matters.<br>Quality measured continuously.</h2>
+        <p class="lede" style="text-align:center; margin-top: 4px;">Questions?</p>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="nav-controls">
+    <button class="nav-btn" onclick="prevSlide()">←</button>
+    <span class="slide-counter"><span id="current">1</span> / <span id="total">16</span></span>
+    <button class="nav-btn" onclick="nextSlide()">→</button>
+  </div>
+
+  <script>
+    let current = 1;
+    const total = document.querySelectorAll('.slide').length;
+    document.getElementById('total').textContent = total;
+
+    function showSlide(n) {
+      if (n < 1) n = 1;
+      if (n > total) n = total;
+      current = n;
+      document.querySelectorAll('.slide').forEach((s, i) => s.classList.toggle('active', i === n - 1));
+      document.getElementById('current').textContent = n;
+      document.getElementById('progressBar').style.width = (n / total * 100) + '%';
+    }
+    function nextSlide() { showSlide(current + 1); }
+    function prevSlide() { showSlide(current - 1); }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); nextSlide(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); prevSlide(); }
+    });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.nav-controls') && !e.target.closest('a')) nextSlide();
+    });
+
+    showSlide(parseInt(location.hash.replace('#', ''), 10) || 1);
+
+    const qCanvas = document.getElementById('qualityChart');
+    if (qCanvas) {
+      new Chart(qCanvas, {
+        type: 'line',
+        data: {
+          labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+          datasets: [
+            {
+              label: 'Level F1 (vs. judge)',
+              data: [0.78, 0.81, 0.80, 0.83, 0.86, 0.85, 0.88],
+              borderColor: '#2563eb',
+              backgroundColor: 'rgba(37, 99, 235, 0.08)',
+              borderWidth: 2.5,
+              fill: true,
+              tension: 0.35,
+              pointRadius: 3,
+            },
+            {
+              label: 'Summary quality (÷10)',
+              data: [0.70, 0.72, 0.74, 0.73, 0.76, 0.78, 0.79],
+              borderColor: '#d97706',
+              backgroundColor: 'transparent',
+              borderWidth: 2.5,
+              borderDash: [5, 4],
+              tension: 0.35,
+              pointRadius: 3,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { color: '#64748b', boxWidth: 14, font: { size: 12 } } },
+          },
+          scales: {
+            x: { grid: { color: '#e2e8f0' }, ticks: { color: '#64748b', font: { size: 11 } } },
+            y: { min: 0, max: 1, grid: { color: '#e2e8f0' }, ticks: { color: '#64748b', font: { size: 11 } } },
+          },
+        },
+      });
+    }
+  </script>
+</body>
+</html>

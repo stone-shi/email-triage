@@ -6,6 +6,7 @@ Exposes local database access, text search, and email triage pipelines to AI cli
 
 import asyncio
 import logging
+import re
 import sys
 import threading
 import itertools
@@ -237,11 +238,27 @@ class AppAuthMiddleware:
     there was already visible to a tool call -- but a POST to /messages/ was
     reaching the server with no auth check of its own, protected only by the
     session_id being hard to guess.
+
+    That guard initially required a token on *every* request including
+    /messages/ POSTs -- but the mcp SDK's own SSE transport (see
+    mcp/server/sse.py::connect_sse) hands the client a bare
+    "/messages/?session_id=<uuid>" endpoint with no way to carry the original
+    token forward, and most SSE-based MCP clients only ever authenticate the
+    initial GET /sse connection, never the follow-up POSTs. Requiring a token
+    on /messages/ too therefore 401'd every real client. The fix: record which
+    profile authenticated each session_id's originating GET /sse connection
+    (by watching for the "endpoint" SSE event as it streams out, which is the
+    only place the server-assigned session_id is ever exposed), and let a
+    /messages/ POST through on session_id alone if it matches a still-open,
+    already-authenticated session -- the session_id is only ever handed out
+    over an SSE stream that itself required a valid token, and the mapping is
+    torn down the moment that stream disconnects.
     """
 
     def __init__(self, app, token_map: Dict[str, str]):
         self.app = app
         self.token_map = token_map
+        self._session_profiles: Dict[str, str] = {}
 
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket"):
@@ -262,6 +279,18 @@ class AppAuthMiddleware:
                     token = query_params.get("token")
 
                 profile = self._resolve_profile(token)
+
+                session_id = None
+                is_messages = path.startswith("/messages")
+                if is_messages:
+                    query_params = QueryParams(scope.get("query_string", b"").decode("utf-8"))
+                    session_id = query_params.get("session_id")
+                    if profile is None and session_id:
+                        # No (valid) token on this POST -- fall back to trusting an
+                        # already-authenticated session, since the mcp SDK never
+                        # gives clients a way to resend the token here.
+                        profile = self._session_profiles.get(session_id)
+
                 if profile is None:
                     body = b'{"error":{"code":"auth_required","message":"Invalid or missing MCP token"}}'
                     await send({
@@ -275,12 +304,31 @@ class AppAuthMiddleware:
                     await send({"type": "http.response.body", "body": body, "more_body": False})
                     return
 
+                send_for_app = send
+                new_session_ids: List[str] = []
+                if not is_messages:
+                    # This is the GET /sse connection: watch its outgoing body for the
+                    # SDK's "endpoint" event, which is the only place session_id is
+                    # ever minted, and remember which profile authenticated it.
+                    async def _capturing_send(message, _send=send, _profile=profile, _ids=new_session_ids):
+                        if message.get("type") == "http.response.body":
+                            match = re.search(rb"session_id=([0-9a-fA-F]{32})", message.get("body", b""))
+                            if match:
+                                sid = match.group(1).decode("ascii")
+                                self._session_profiles[sid] = _profile
+                                _ids.append(sid)
+                        await _send(message)
+
+                    send_for_app = _capturing_send
+
                 token_t = current_profile.set(profile)
                 try:
-                    await self.app(scope, receive, send)
+                    await self.app(scope, receive, send_for_app)
                     return
                 finally:
                     current_profile.reset(token_t)
+                    for sid in new_session_ids:
+                        self._session_profiles.pop(sid, None)
 
         await self.app(scope, receive, send)
 

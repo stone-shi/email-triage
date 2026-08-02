@@ -32,9 +32,7 @@ def mock_settings():
     triage_config.tei_model = "localai/qwen3-reranker-0.6b"
     triage_config.tei_api_key = "tei-key"
     triage_config.tei_noise_enabled = True
-    triage_config.tei_signal_enabled = True
     triage_config.tei_noise_threshold = 0.999
-    triage_config.tei_signal_threshold = 0.95
     triage_config.whitelist_vip_senders = []
     triage_config.whitelist_domains = []
     triage_config.blacklist_keywords = [
@@ -414,107 +412,63 @@ class TestChatCompletionsDisablesStreaming:
             assert mock_post.call_args[1]["json"]["stream"] is False
 
 
-class TestTEIRouter:
-    def test_tei_router_disabled(self, engine):
+class TestRerankRouter:
+    """Level 0.5 rerank noise filter -- noise-only gate, never escalates to Level 2."""
+
+    def test_rerank_router_disabled(self, engine):
         engine.settings.triage.tei_router_enabled = False
-        override_level, reason, confidence = engine.run_tei_router(
+        override_level, reason, confidence = engine.run_rerank_router(
             "sender@test.com", "Subject", "Snippet"
         )
         assert override_level is None
         assert reason is None
         assert confidence == 1.0
 
-    def test_tei_router_signal_escalation(self, engine):
+    def test_rerank_router_noise_filter(self, engine):
         engine.settings.triage.tei_router_enabled = True
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "results": [
-                {"index": 0, "relevance_score": 0.96},
-                {"index": 1, "relevance_score": 0.01},
-            ]
+            "results": [{"index": 0, "relevance_score": 0.9995}],
         }
         with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
-            override_level, reason, confidence = engine.run_tei_router(
-                "boss@company.com", "Urgent Q3 Report", "Please review the report"
-            )
-        assert override_level == 2
-        assert "Rerank Signal" in reason
-        call_kwargs = mock_post.call_args.kwargs
-        assert call_kwargs["json"]["model"] == "localai/qwen3-reranker-0.6b"
-        assert call_kwargs["headers"]["Authorization"] == "Bearer tei-key"
-
-    def test_tei_router_noise_filter(self, engine):
-        engine.settings.triage.tei_router_enabled = True
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [
-                {"index": 1, "relevance_score": 0.9995},
-                {"index": 0, "relevance_score": 0.0001},
-            ]
-        }
-        with patch.object(engine.http_client, "post", return_value=mock_response):
-            override_level, reason, confidence = engine.run_tei_router(
+            override_level, reason, confidence = engine.run_rerank_router(
                 "spam@junk.com", "BUY NOW", "Limited time offer"
             )
         assert override_level == 0
-        assert "Rerank Noise" in reason
+        assert "Rerank noise" in reason
+        call_kwargs = mock_post.call_args.kwargs
+        assert call_kwargs["json"]["model"] == "localai/qwen3-reranker-0.6b"
+        assert len(call_kwargs["json"]["documents"]) == 1
+        assert call_kwargs["headers"]["Authorization"] == "Bearer tei-key"
 
-    def test_tei_router_signal_direction_disabled(self, engine):
-        engine.settings.triage.tei_router_enabled = True
-        engine.settings.triage.tei_signal_enabled = False
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [
-                {"index": 0, "relevance_score": 0.96},
-                {"index": 1, "relevance_score": 0.01},
-            ]
-        }
-        with patch.object(engine.http_client, "post", return_value=mock_response):
-            override_level, reason, confidence = engine.run_tei_router(
-                "boss@company.com", "Urgent Q3 Report", "Please review the report"
-            )
-        assert override_level is None
-
-    def test_tei_router_noise_direction_disabled(self, engine):
+    def test_rerank_router_noise_direction_disabled(self, engine):
         engine.settings.triage.tei_router_enabled = True
         engine.settings.triage.tei_noise_enabled = False
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [
-                {"index": 1, "relevance_score": 0.9995},
-                {"index": 0, "relevance_score": 0.0001},
-            ]
-        }
-        with patch.object(engine.http_client, "post", return_value=mock_response):
-            override_level, reason, confidence = engine.run_tei_router(
+        with patch.object(engine.http_client, "post") as mock_post:
+            override_level, reason, confidence = engine.run_rerank_router(
                 "spam@junk.com", "BUY NOW", "Limited time offer"
             )
         assert override_level is None
+        mock_post.assert_not_called()
 
-    def test_tei_router_ambiguous(self, engine):
+    def test_rerank_router_below_threshold_falls_through_to_level_1(self, engine):
         engine.settings.triage.tei_router_enabled = True
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "results": [
-                {"index": 0, "relevance_score": 0.5},
-                {"index": 1, "relevance_score": 0.4},
-            ]
+            "results": [{"index": 0, "relevance_score": 0.5}],
         }
         with patch.object(engine.http_client, "post", return_value=mock_response):
-            override_level, reason, confidence = engine.run_tei_router(
+            override_level, reason, confidence = engine.run_rerank_router(
                 "news@example.com", "Daily Brief", "Today's news"
             )
         assert override_level is None
 
-    def test_tei_router_request_failure(self, engine):
+    def test_rerank_router_request_failure(self, engine):
         engine.settings.triage.tei_router_enabled = True
         with patch.object(engine.http_client, "post", side_effect=httpx.HTTPError("Rerank down")):
-            override_level, reason, confidence = engine.run_tei_router(
+            override_level, reason, confidence = engine.run_rerank_router(
                 "test@test.com", "Test", "Snippet"
             )
         assert override_level is None

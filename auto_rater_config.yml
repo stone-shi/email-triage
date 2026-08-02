@@ -6,7 +6,6 @@ test_configurations:
     tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
     tei_model: "localai/qwen3-reranker-0.6b"
     tei_router_enabled: false
-    tei_signal_threshold: 0.85
     tei_noise_threshold: 0.85
   - name: "gemma4e4b"
     triage_model: "homedesk/gemma-4-e4b"
@@ -44,7 +43,6 @@ test_configurations:
     tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
     tei_model: "localai/qwen3-reranker-0.6b"
     tei_router_enabled: true
-    tei_signal_threshold: 0.85
     tei_noise_threshold: 0.85
   - name: "baseline_deepseek_flash_routed_60"
     triage_model: "deepseek/deepseek-v4-flash"
@@ -52,7 +50,6 @@ test_configurations:
     tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
     tei_model: "localai/qwen3-reranker-0.6b"
     tei_router_enabled: true
-    tei_signal_threshold: 0.6
     tei_noise_threshold: 0.6
   - name: "baseline_gemini_pro"
     triage_model: "gemini/gemini-3.1-pro-preview"

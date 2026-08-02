@@ -19,6 +19,7 @@ from starlette.responses import JSONResponse, Response
 
 import app_settings_store
 import appdb
+import connection_check
 import mcp_tokens_store
 import users_store
 from app_errors import AppStoreError, NotFoundError, ValidationError
@@ -299,6 +300,42 @@ def register_web_routes(mcp) -> None:
         except ValidationError as exc:
             return error_response(400, "validation_error", str(exc))
         return JSONResponse({"ok": True, "updated": updated})
+
+    @mcp.custom_route("/api/settings/test", methods=["POST"])
+    @requires_admin
+    async def test_settings_route(request: Request) -> Response:
+        conn: sqlite3.Connection = request.state.conn
+        body = await _json_body(request)
+        kind = body.get("kind")
+        overrides = body.get("values") or {}
+
+        def resolved(key: str):
+            override = overrides.get(key)
+            if override not in (None, ""):
+                return override
+            return app_settings_store.get_value(conn, key)
+
+        if kind == "triage":
+            result = connection_check.test_chat_completion(
+                resolved("triage_base_url"), resolved("triage_api_key"), resolved("triage_model")
+            )
+        elif kind == "summary":
+            result = connection_check.test_chat_completion(
+                resolved("summary_base_url"), resolved("summary_api_key"), resolved("summary_model")
+            )
+        elif kind == "quality_judge":
+            result = connection_check.test_chat_completion(
+                resolved("quality_check.judge_base_url"),
+                resolved("quality_check.judge_api_key"),
+                resolved("quality_check.judge_model"),
+            )
+        elif kind == "tei":
+            result = connection_check.test_rerank(
+                resolved("tei_url"), resolved("tei_api_key"), resolved("tei_model")
+            )
+        else:
+            return error_response(400, "validation_error", f"Unknown test kind {kind!r}")
+        return JSONResponse(result)
 
     @mcp.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> Response:

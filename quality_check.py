@@ -13,7 +13,7 @@ Design notes:
   being evaluated -- standard shadow-eval methodology. This only requires the
   judge to independently re-run L1 classification (and, when ambiguous, the
   premium escalation) -- it never needs to know *why* production reached its
-  original level (VIP bypass, static blacklist, TEI router, or the LLM), only
+  original level (VIP bypass, static blacklist, rerank noise filter, or the LLM), only
   what that final level was.
 - There is no "predicted vs actual" pair to diff for free text, so
   summarization quality is scored directly: the judge model grades the

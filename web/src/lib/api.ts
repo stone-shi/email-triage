@@ -233,6 +233,8 @@ export const users = {
 export const settings = {
   get: () => get<{ settings: Record<string, SettingEntry> }>("/api/settings"),
   put: (values: Record<string, unknown>) => put<{ ok: true; updated: string[] }>("/api/settings", { values }),
+  test: (kind: "triage" | "summary" | "tei" | "quality_judge", values: Record<string, unknown>) =>
+    post<{ ok: boolean; error: string | null; detail?: string }>("/api/settings/test", { kind, values }),
 };
 
 // ------------------------------------------------------------------ //

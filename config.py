@@ -162,9 +162,7 @@ class TriageSettings(BaseModel):
     tei_api_key: str = Field(default_factory=lambda: os.getenv("EMAIL_TRIAGE_TEI_API_KEY", ""))
     tei_router_enabled: bool = False
     tei_noise_enabled: bool = True
-    tei_signal_enabled: bool = True
     tei_noise_threshold: float = 0.999
-    tei_signal_threshold: float = 0.95
     whitelist_vip_senders: List[str] = []
     whitelist_domains: List[str] = []
     blacklist_keywords: List[str] = [
@@ -315,12 +313,8 @@ class Settings(BaseSettings):
                     self.triage.tei_router_enabled = bool(triage_data["tei_router_enabled"])
                 if "tei_noise_enabled" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_NOISE_ENABLED"):
                     self.triage.tei_noise_enabled = bool(triage_data["tei_noise_enabled"])
-                if "tei_signal_enabled" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_SIGNAL_ENABLED"):
-                    self.triage.tei_signal_enabled = bool(triage_data["tei_signal_enabled"])
                 if "tei_noise_threshold" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_NOISE_THRESHOLD"):
                     self.triage.tei_noise_threshold = float(triage_data["tei_noise_threshold"])
-                if "tei_signal_threshold" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_SIGNAL_THRESHOLD"):
-                    self.triage.tei_signal_threshold = float(triage_data["tei_signal_threshold"])
                 if "whitelist_vip_senders" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__WHITELIST_VIP_SENDERS"):
                     self.triage.whitelist_vip_senders = triage_data["whitelist_vip_senders"]
                 if "whitelist_domains" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__WHITELIST_DOMAINS"):

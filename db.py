@@ -474,8 +474,8 @@ class EmailDB:
     def get_daily_token_stats(self, days: int = 30) -> list:
         """
         Per-day input/output token usage for the last `days` days (summed from Level 1 + Level 2
-        prompt/completion tokens actually spent), plus an estimate of tokens saved by the TEI/
-        rerank router intercepting messages before they ever reached Level 1 classification --
+        prompt/completion tokens actually spent), plus an estimate of tokens saved by the rerank
+        noise filter intercepting messages before they ever reached Level 1 classification --
         computed as the count of intercepted messages that day times the average actual Level 1
         cost observed across all history. Days with no activity are zero-filled so callers get a
         continuous series. Returned oldest-first as a list of

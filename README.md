@@ -38,7 +38,7 @@ EMAIL_TRIAGE_TRIAGE_API_KEY=your_api_key_here
 EMAIL_TRIAGE_SUMMARY_BASE_URL=https://your-llm-proxy.com/v1
 EMAIL_TRIAGE_SUMMARY_API_KEY=your_api_key_here
 
-# Reranker (semantic router) configuration - a /rerank endpoint, e.g. TEI or an OpenAI-compatible proxy
+# Reranker (Level 0.5 noise filter) configuration - a /rerank endpoint, e.g. TEI or an OpenAI-compatible proxy
 EMAIL_TRIAGE_TEI_URL=https://your-rerank-proxy.com/v1/rerank
 EMAIL_TRIAGE_TEI_MODEL=localai/qwen3-reranker-0.6b
 EMAIL_TRIAGE_TEI_API_KEY=your_api_key_here

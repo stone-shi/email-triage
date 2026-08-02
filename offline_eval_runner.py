@@ -165,57 +165,17 @@ def run_baseline_triage(
         result["duration_sec"] = time.time() - start_time
         return result
 
-    # 3. Level 0.5 TEI Semantic Router
+    # 3. Level 0.5 rerank noise filter (never escalates, only ever short-circuits to Level 0)
     if config.get("tei_router_enabled", False):
-        tei_override_level, tei_reason, tei_score = engine.run_tei_router(sender, subject, snippet)
+        tei_override_level, tei_reason, tei_score = engine.run_rerank_router(sender, subject, snippet)
         result["tei_score"] = tei_score
-        
+
         if tei_override_level == 0:
             result["triage_level"] = 0
             result["reason"] = tei_reason
             result["score"] = tei_score
             result["tag"] = "low"
             result["tei_decision"] = "noise"
-            result["duration_sec"] = time.time() - start_time
-            return result
-        elif tei_override_level == 2:
-            result["triage_level"] = 2
-            result["reason"] = tei_reason
-            result["score"] = tei_score
-            result["tei_decision"] = "signal"
-            
-            if not email_body or len(email_body.strip()) < 10:
-                result["summary"] = "No substantive content to summarize."
-            else:
-                result["level_2_run"] = True
-                l2_system = prompts.get("level_2_summarization", {}).get("system", "")
-                l2_prompt = f"Subject: {subject}\nBody:\n{email_body[:8000]}"
-                try:
-                    l2_payload = {
-                        "model": summary_model,
-                        "messages": [
-                            {"role": "system", "content": l2_system},
-                            {"role": "user", "content": l2_prompt}
-                        ],
-                        "temperature": 0.2,
-                        "include_reasoning": False
-                    }
-                    resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
-                    resp.raise_for_status()
-                    resp_json = resp.json()
-                    
-                    usage = resp_json.get("usage", {})
-                    result["prompt_tokens"] += usage.get("prompt_tokens", 0)
-                    result["completion_tokens"] += usage.get("completion_tokens", 0)
-                    
-                    content = resp_json["choices"][0]["message"]["content"]
-                    res_dict = json.loads(extract_json(content))
-                    result["summary"] = res_dict.get("summary", "")
-                    result["score"] = res_dict.get("confidence_score", tei_score)
-                    result["tag"] = res_dict.get("tag", "notification")
-                except Exception as e:
-                    result["summary"] = f"Summary generation failed: {e}"
-            
             result["duration_sec"] = time.time() - start_time
             return result
         else:

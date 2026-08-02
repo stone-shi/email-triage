@@ -10,12 +10,15 @@ const SECTIONS: { title: string; description?: string; keys: string[] }[] = [
     ],
   },
   {
-    title: "Triage router",
+    title: "Triage & rerank filter",
+    description:
+      "The rerank filter is a cheap, high-precision noise gate that runs before the Level 1 LLM call -- " +
+      "it only ever short-circuits obvious noise straight to Level 0; anything else always falls through " +
+      "to a real Level 1 classification. Off by default.",
     keys: [
       "triage.confidence_threshold", "triage.triage_type",
       "tei_url", "tei_model", "tei_api_key",
-      "triage.tei_router_enabled", "triage.tei_noise_enabled", "triage.tei_signal_enabled",
-      "triage.tei_noise_threshold", "triage.tei_signal_threshold",
+      "triage.tei_router_enabled", "triage.tei_noise_enabled", "triage.tei_noise_threshold",
     ],
   },
   {
@@ -65,6 +68,35 @@ const FIELD_LABELS: Record<string, string> = {
   "quality_check.judge_base_url": "Judge LLM base URL",
   "quality_check.judge_model": "Judge LLM model",
   "quality_check.judge_api_key": "Judge LLM API key",
+  "triage.tei_router_enabled": "Enable rerank noise filter",
+  "triage.tei_noise_enabled": "Noise filter active",
+  "triage.tei_noise_threshold": "Noise score threshold",
+  "tei_url": "Reranker URL",
+  "tei_model": "Reranker model",
+  "tei_api_key": "Reranker API key",
+};
+
+// Per-section "Test connection" buttons: each fires a trivial live call against
+// the endpoint built from the field group's keys (falling back to the saved
+// value for any key not currently edited) and reports ok/error inline.
+const TEST_GROUPS: Record<
+  string,
+  { label: string; kind: "triage" | "summary" | "tei" | "quality_judge"; keys: string[] }[]
+> = {
+  "LLM endpoints": [
+    { label: "Test triage connection", kind: "triage", keys: ["triage_base_url", "triage_model", "triage_api_key"] },
+    { label: "Test summary connection", kind: "summary", keys: ["summary_base_url", "summary_model", "summary_api_key"] },
+  ],
+  "Triage & rerank filter": [
+    { label: "Test reranker connection", kind: "tei", keys: ["tei_url", "tei_model", "tei_api_key"] },
+  ],
+  "Quality check": [
+    {
+      label: "Test judge connection",
+      kind: "quality_judge",
+      keys: ["quality_check.judge_base_url", "quality_check.judge_model", "quality_check.judge_api_key"],
+    },
+  ],
 };
 
 const FIELD_HELP: Record<string, string> = {
@@ -81,6 +113,18 @@ const FIELD_HELP: Record<string, string> = {
     "Model name sent to the judge endpoint above.",
   "quality_check.judge_api_key":
     "API key for the judge endpoint. Leave blank when saving to keep the currently stored key unchanged.",
+  "triage.tei_router_enabled":
+    "When on, every email is scored against a single \"noise\" anchor via the reranker below before " +
+    "the Level 1 LLM call. Only ever short-circuits confidently-noise mail to Level 0 for free -- it " +
+    "never escalates, so anything not confidently noise still gets a real Level 1 classification.",
+  "triage.tei_noise_threshold":
+    "Relevance score (from the reranker's /rerank endpoint) an email's noise score must meet or exceed " +
+    "to be filtered as Level 0 without an LLM call. Reranker scores aren't calibrated the same way as an " +
+    "LLM's confidence -- keep this high and bias toward precision, since a false positive here silently " +
+    "drops a real email.",
+  "tei_url": "OpenAI/Cohere-style /rerank endpoint (model + query + documents in, relevance scores out).",
+  "tei_model": "Model name sent to the reranker endpoint above.",
+  "tei_api_key": "API key for the reranker endpoint. Leave blank when saving to keep the currently stored key unchanged.",
 };
 
 function SettingField({
@@ -130,6 +174,9 @@ export function AdminSystemSettingsPage() {
   const [dirty, setDirty] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
   const [savedSection, setSavedSection] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<
+    Record<string, { status: "testing" | "ok" | "error"; message?: string }>
+  >({});
 
   const load = useCallback(async () => {
     const { settings: entries } = await settingsApi.get();
@@ -165,6 +212,39 @@ export function AdminSystemSettingsPage() {
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to save settings");
+    }
+  }
+
+  async function runTest(kind: "triage" | "summary" | "tei" | "quality_judge", keys: string[]) {
+    setTestResults((prev) => ({ ...prev, [kind]: { status: "testing" } }));
+    // Use whatever's currently on-screen (edited or saved) so an admin can test
+    // before hitting Save; secret fields are only sent if the admin just typed a
+    // new one -- otherwise the backend falls back to the already-stored key.
+    const values: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (key in dirty) {
+        values[key] = dirty[key];
+        continue;
+      }
+      const entry = all?.[key];
+      if (entry && !entry.is_secret) {
+        values[key] = entry.value;
+      }
+    }
+    try {
+      const result = await settingsApi.test(kind, values);
+      setTestResults((prev) => ({
+        ...prev,
+        [kind]: {
+          status: result.ok ? "ok" : "error",
+          message: result.ok ? result.detail ?? "Connection OK" : result.error ?? "Test failed",
+        },
+      }));
+    } catch (e) {
+      setTestResults((prev) => ({
+        ...prev,
+        [kind]: { status: "error", message: e instanceof ApiError ? e.message : "Test failed" },
+      }));
     }
   }
 
@@ -226,6 +306,28 @@ export function AdminSystemSettingsPage() {
                   <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
                     {FIELD_HELP[key]}
                   </p>
+                )}
+              </div>
+            );
+          })}
+          {TEST_GROUPS[section.title]?.map((group) => {
+            const result = testResults[group.kind];
+            return (
+              <div key={group.kind} style={{ marginBottom: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => runTest(group.kind, group.keys)}
+                  disabled={result?.status === "testing"}
+                >
+                  {result?.status === "testing" ? "Testing…" : group.label}
+                </button>
+                {result && result.status !== "testing" && (
+                  <span
+                    className={result.status === "ok" ? "success-text" : "error-text"}
+                    style={{ marginLeft: 8, fontSize: 12.5 }}
+                  >
+                    {result.message}
+                  </span>
                 )}
               </div>
             );

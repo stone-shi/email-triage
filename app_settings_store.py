@@ -52,9 +52,7 @@ RUNTIME_KEYS: Dict[str, SettingSpec] = {
         SettingSpec("tei_api_key", "str", "tei_api_key", is_secret=True),
         SettingSpec("triage.tei_router_enabled", "bool", "triage.tei_router_enabled"),
         SettingSpec("triage.tei_noise_enabled", "bool", "triage.tei_noise_enabled"),
-        SettingSpec("triage.tei_signal_enabled", "bool", "triage.tei_signal_enabled"),
         SettingSpec("triage.tei_noise_threshold", "float", "triage.tei_noise_threshold"),
-        SettingSpec("triage.tei_signal_threshold", "float", "triage.tei_signal_threshold"),
         # Sender lists -- per-user (personal: my VIP isn't yours)
         SettingSpec("triage.whitelist_vip_senders", "json", "triage.whitelist_vip_senders", user_overridable=True),
         SettingSpec("triage.whitelist_domains", "json", "triage.whitelist_domains", user_overridable=True),

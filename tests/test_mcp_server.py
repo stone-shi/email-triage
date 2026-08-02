@@ -39,9 +39,7 @@ def make_fake_settings(**overrides):
     s.triage.tei_api_key = ""
     s.triage.tei_router_enabled = False
     s.triage.tei_noise_enabled = True
-    s.triage.tei_signal_enabled = True
     s.triage.tei_noise_threshold = 0.9
-    s.triage.tei_signal_threshold = 0.9
     s.triage.whitelist_vip_senders = []
     s.triage.whitelist_domains = []
     s.triage.blacklist_keywords = []
@@ -1156,7 +1154,7 @@ class TestProfileTokenStats:
 
         assert result["tei_enabled"] is False
         assert result["daily"][0]["tei_saved_tokens"] == 0
-        # input/output tokens are untouched, only the TEI estimate is zeroed
+        # input/output tokens are untouched, only the rerank-filter estimate is zeroed
         assert result["daily"][0]["input_tokens"] == 100
 
 

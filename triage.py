@@ -150,43 +150,36 @@ class EmailTriageEngine:
                 
         return False, None
 
-    def run_tei_router(self, sender: str, subject: str, snippet: str) -> Tuple[Optional[int], Optional[str], float]:
+    def run_rerank_router(self, sender: str, subject: str, snippet: str) -> Tuple[Optional[int], Optional[str], float]:
         """
-        Level 0.5 TEI Router: Determines if an email should be filtered as noise,
-        escalated to Level 2 (Summary), or passed to Level 1 (LLM).
-        Reranks the email against fixed "important" / "noise" anchor documents via
-        the reranker's /rerank endpoint (Cohere/Jina-style: model + query + documents).
+        Level 0.5 rerank noise filter: a cheap, high-precision gate that runs before
+        the Level 1 LLM call to skip obvious noise for free. Scores the email against
+        a single "noise" anchor document via the reranker's /rerank endpoint
+        (Cohere/Jina-style: model + query + documents). Deliberately one-directional --
+        it only ever short-circuits to Level 0; anything not confidently noise falls
+        through to Level 1 so it still gets a real classification (an express lane
+        straight to Level 2 based on embedding similarity alone, with no LLM sanity
+        check, cost more than it saved and risked mis-escalating on a single score).
         Returns (suggested_level_override, reason, confidence).
         """
         if not self.settings.triage.tei_router_enabled:
             return None, None, 1.0
+        if not getattr(self.settings.triage, "tei_noise_enabled", True):
+            return None, None, 1.0
 
         query_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
         try:
-            logger.info("Level 0.5 Rerank Router request sent to server: %s", self.settings.triage.tei_url)
-            important_score, noise_score = self._rerank(query_text, [RERANK_IMPORTANT_ANCHOR, RERANK_NOISE_ANCHOR])
+            logger.info("Level 0.5 rerank noise-filter request sent to server: %s", self.settings.triage.tei_url)
+            (noise_score,) = self._rerank(query_text, [RERANK_NOISE_ANCHOR])
 
-            # Logic 1: High-Confidence Signal -> Escalate to Level 2
-            if (getattr(self.settings.triage, "tei_signal_enabled", True)
-                    and important_score >= self.settings.triage.tei_signal_threshold
-                    and important_score >= noise_score):
-                reason = f"Rerank Signal Express Lane: importance score {important_score:.4f}"
-                logger.info("Level 0.5 Rerank Escalation: Signal detected with score %s", important_score)
-                return 2, reason, important_score
-
-            # Logic 2: High-Confidence Noise -> Filter to Level 0
-            if (getattr(self.settings.triage, "tei_noise_enabled", True)
-                    and noise_score >= self.settings.triage.tei_noise_threshold
-                    and noise_score > important_score):
-                reason = f"Rerank Noise Filter: noise score {noise_score:.4f}"
-                logger.info("Level 0.5 Rerank Filter: Noise detected with score %s", noise_score)
+            if noise_score >= self.settings.triage.tei_noise_threshold:
+                reason = f"Rerank noise filter: noise score {noise_score:.4f}"
+                logger.info("Level 0.5 rerank filter: noise detected with score %s", noise_score)
                 return 0, reason, noise_score
 
-            # Logic 3: Ambiguous or Low Confidence -> Pass to Level 1 LLM
-            winning_score = max(important_score, noise_score)
-            return None, f"Rerank Neutral/Ambiguous: important={important_score:.4f} noise={noise_score:.4f}", winning_score
+            return None, f"Rerank neutral: noise score {noise_score:.4f}", noise_score
         except Exception as e:
-            logger.error("Level 0.5 Rerank Router failed: %s", e)
+            logger.error("Level 0.5 rerank noise filter failed: %s", e)
             return None, None, 0.0
 
     def _extract_json(self, text: str) -> str:
@@ -244,10 +237,10 @@ class EmailTriageEngine:
                 logger.info("Level 1 Rerank Classifier result for '%s': SuggestedLevel=%s (Score: %s)", subject, suggested_level, winning_score)
                 metrics["duration_sec"] = time.time() - start_time
                 return suggested_level, reason, winning_score, tag, metrics
-            except Exception as tei_err:
-                logger.error("Level 1 Rerank Classifier server prediction failed: %s. Falling back to safety Level 2.", tei_err)
+            except Exception as rerank_err:
+                logger.error("Level 1 Rerank Classifier server prediction failed: %s. Falling back to safety Level 2.", rerank_err)
                 metrics["duration_sec"] = time.time() - start_time
-                return 2, f"TEI server prediction error: {tei_err}", 1.0, "personal", metrics
+                return 2, f"Rerank server prediction error: {rerank_err}", 1.0, "personal", metrics
                 
         system_instruction = self.prompts.get("level_1_fast_triage", {}).get("system")
         if not system_instruction:

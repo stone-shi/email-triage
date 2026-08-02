@@ -480,7 +480,7 @@ def _run_tiered_triage(
     msg_id: str, account: str, sender: str, subject: str, date_str: str, snippet: str, full_body: str,
 ) -> Dict[str, Any]:
     """
-    Runs the VIP -> Level 0 -> Level 0.5 (TEI router) -> Level 1 (+ premium escalation) -> Level 2
+    Runs the VIP -> Level 0 -> Level 0.5 (rerank noise filter) -> Level 1 (+ premium escalation) -> Level 2
     tiered pipeline, mirroring the branch logic that used to live inline in fetch_and_process_unread's
     process_emails closure. Unlike that closure, full_body is always pre-supplied (already downloaded
     by sync_account) rather than lazily fetched.
@@ -504,7 +504,7 @@ def _run_tiered_triage(
         )
         return {"triage_level": 0, "tag": "low"}
 
-    tei_lvl, tei_reason, tei_score = engine.run_tei_router(sender, subject, snippet)
+    tei_lvl, tei_reason, tei_score = engine.run_rerank_router(sender, subject, snippet)
     if tei_lvl == 0:
         db.save_triage_result(
             msg_id, account, sender, subject, date_str,
@@ -512,17 +512,6 @@ def _run_tiered_triage(
             score=tei_score, triage_level=0, tag="low", level_1_run=False, level_2_run=False
         )
         return {"triage_level": 0, "tag": "low"}
-    elif tei_lvl == 2:
-        summary, _score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body)
-        db.save_triage_result(
-            msg_id, account, sender, subject, date_str,
-            level_0_status="passed", level_1_status="tei_escalated", level_2_summary=summary,
-            reason=tei_reason, score=tei_score, triage_level=2, tag=l2_tag,
-            email_body=full_body, level_1_run=False, level_2_run=True,
-            level_2_prompt_tokens=l2_metrics["prompt_tokens"],
-            level_2_completion_tokens=l2_metrics["completion_tokens"],
-        )
-        return {"triage_level": 2, "tag": l2_tag}
 
     suggested_lvl, reason, score, l1_tag, l1_metrics = engine.run_level_1_classification(sender, subject, snippet)
 
@@ -1135,9 +1124,7 @@ def _profile_config(name: str) -> Dict[str, Any]:
         "tei_api_key": _mask_secret(s.triage.tei_api_key),
         "tei_router_enabled": s.triage.tei_router_enabled,
         "tei_noise_enabled": s.triage.tei_noise_enabled,
-        "tei_signal_enabled": s.triage.tei_signal_enabled,
         "tei_noise_threshold": s.triage.tei_noise_threshold,
-        "tei_signal_threshold": s.triage.tei_signal_threshold,
         "whitelist_vip_senders": len(s.triage.whitelist_vip_senders),
         "whitelist_domains": len(s.triage.whitelist_domains),
         "blacklist_keywords": len(s.triage.blacklist_keywords),
@@ -1158,8 +1145,8 @@ def _profile_config(name: str) -> Dict[str, Any]:
 def _profile_token_stats(name: str, days: int = 30) -> Dict[str, Any]:
     """
     Daily input/output token usage for one profile over the last `days` days, plus tokens saved
-    by the TEI/rerank router. tei_saved_tokens is forced to 0 for every day when the profile's
-    current config has tei_router_enabled=False, regardless of what historical rows suggest.
+    by the Level 0.5 rerank noise filter. tei_saved_tokens is forced to 0 for every day when the
+    profile's current config has tei_router_enabled=False, regardless of what historical rows suggest.
     """
     db, _, profile_settings = get_resources(name)
     tei_enabled = bool(profile_settings.triage.tei_router_enabled)

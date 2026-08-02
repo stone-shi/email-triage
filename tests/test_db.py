@@ -568,7 +568,7 @@ class TestEmailDBDailyTokenStats:
             level_0_status="passed", triage_level=1, tag="notification",
             level_1_run=True, level_1_prompt_tokens=200, level_1_completion_tokens=40,
         )
-        # Two TEI-intercepted messages that skipped Level 1 entirely.
+        # Two rerank-intercepted messages that skipped Level 1 entirely.
         db.save_triage_result(
             message_id="<tei1@test.com>", account="acct", sender="s", subject="sub", date_str="d",
             level_0_status="passed", level_1_status="tei_filtered", triage_level=0, tag="low",

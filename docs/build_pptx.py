@@ -333,17 +333,14 @@ def build_native_pptx() -> Path:
           "unsubscribe · newsletter · promotions · marketing · no-reply · noreply · "
           "digest · advertisement")
 
-    # 5. TEI / reranker mechanics
+    # 5. Rerank noise filter mechanics
     s = _blank_slide(prs)
-    _kicker(s, "Stage 0.5 — deep dive"); _title(s, "How the reranker router actually works")
+    _kicker(s, "Stage 0.5 — deep dive"); _title(s, "How the rerank noise filter actually works")
     _body(s, "Not an LLM call — a semantic reranker (a Cohere/Jina-style /rerank endpoint) scores each "
-             "email's relevance against two fixed “anchor” documents representing importance and noise.")
-    _card(s, Inches(0.6), Inches(2.75), Inches(5.85), Inches(1.15),
-          "“Important” anchor",
-          "“An urgent personal message from a specific person requiring your direct reply, decision, or "
-          "action, such as a work request, deadline, bill, or critical account issue.”",
-          accent=(WARNING, PANEL))
-    _card(s, Inches(6.85), Inches(2.75), Inches(5.85), Inches(1.15),
+             "email's relevance against a single fixed “noise” anchor document. One-directional by design: "
+             "it only ever skips Level 1 for confidently-noise mail; anything else always still gets a "
+             "real Level 1 classification.")
+    _card(s, Inches(0.6), Inches(2.75), Inches(12.1), Inches(1.15),
           "“Noise” anchor",
           "“An automated system notification, media download alert, promotional marketing email, "
           "newsletter, or subscription update that does not require any reply or action from you.”",
@@ -352,11 +349,10 @@ def build_native_pptx() -> Path:
            ["Step", "What happens"],
            [
                ("1. Build the query", "From: {sender} | Subject: {subject} | Snippet: {snippet}"),
-               ("2. Call the reranker", 'POST /rerank {model, query, documents:[important, noise]} '
+               ("2. Call the reranker", 'POST /rerank {model, query, documents:[noise]} '
                                         '→ {results:[{index, relevance_score}]}'),
-               ("3. Route on thresholds", "importance ≥ 0.95 and ≥ noise → Level 2  ·  "
-                                          "noise ≥ 0.999 and > importance → Level 0  ·  "
-                                          "otherwise → Level 1"),
+               ("3. Route on threshold", "noise ≥ 0.999 → Level 0 (skip Level 1, free)  ·  "
+                                          "otherwise → Level 1 (normal LLM classification)"),
            ],
            col_widths=[Inches(2.6), Inches(9.5)])
 

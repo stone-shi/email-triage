@@ -389,6 +389,7 @@ def main() -> None:
     parser.add_argument("-f", "--force", action="store_true", help="Force execution and overwrite existing benchmark results file")
     parser.add_argument("--max-items", type=int, help="Maximum items to process per triage level tier (useful for fast testing)")
     parser.add_argument("--skip-summary", action="store_true", help="Skip Level 2 summarization entirely -- use when you only want to check triage/filter quality, not summary quality")
+    parser.add_argument("--only-missing", action="store_true", help="When --run is not given, only run configurations that don't already have a results JSON file")
     args = parser.parse_args()
 
     if args.skip_summary:
@@ -400,7 +401,16 @@ def main() -> None:
             logger.error("No test configuration found matching name: '%s'", args.run)
             sys.exit(1)
         logger.info("Targeted single configuration run: '%s'", args.run)
-        
+    elif args.only_missing:
+        pending = [c for c in configs if not (workspace_dir / "auto_rater_data" / f"auto_rater_results_{c.get('name')}.json").exists()]
+        skipped = len(configs) - len(pending)
+        if skipped:
+            logger.info("--only-missing active: skipping %d configuration(s) that already have results.", skipped)
+        configs = pending
+        if not configs:
+            logger.info("No configurations pending -- all already have results.")
+            return
+
     logger.info("Loaded %d offline emails. Starting benchmarking configurations...", len(emails))
     
     for cfg in configs:

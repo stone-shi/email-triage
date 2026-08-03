@@ -34,7 +34,7 @@ def extract_json(text: str) -> str:
     
     return text
 
-def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False, max_items: int = None, skip_summary: bool = False) -> None:
+def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False, max_items: int = None, skip_summary: bool = False) -> Dict[str, Any]:
     config_name = config["name"]
     triage_model = config["triage_model"]
     summary_model = config["summary_model"]
@@ -77,6 +77,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     
     http_client = httpx.Client(timeout=1800.0)
     run_results: List[Dict[str, Any]] = []
+    llm_call_log: List[Dict[str, Any]] = []
     
     # Dynamically override reranker settings for this specific configuration profile run
     old_triage_type = getattr(settings.triage, "triage_type", "llm")
@@ -198,10 +199,12 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                     metrics["summary"] = result_dict.get("summary", "")
                     metrics["score"] = result_dict.get("confidence_score", 1.0)
                     metrics["tag"] = result_dict.get("tag", "vip")
+                    llm_call_log.append({"message_id": msg_id, "subject": subject, "stage": "level_2_vip_summary", "status": "success", "error": None})
                 except Exception as e:
                     logger.error("Level 2 VIP summary failed for email %s: %s", msg_id, e)
                     metrics["summary"] = f"Level 2 summarization error: {str(e)}"
-                    
+                    llm_call_log.append({"message_id": msg_id, "subject": subject, "stage": "level_2_vip_summary", "status": "error", "error": str(e)})
+
                 metrics["level_2_duration_sec"] = time.time() - l2_start
                 
             metrics["total_email_process_duration_sec"] = time.time() - email_start_time
@@ -246,11 +249,13 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 metrics["level_0_judge_correctness"] = "Correct" if audit_dict.get("is_actually_low_priority", True) else "False Positive"
                 metrics["level_0_judge_score"] = audit_dict.get("confidence_score", 1.0)
                 metrics["level_0_judge_reason"] = audit_dict.get("reason", "")
+                llm_call_log.append({"message_id": msg_id, "subject": subject, "stage": "level_0_judge_audit", "status": "success", "error": None})
             except Exception as audit_err:
                 logger.error("Level 0 judge audit failed: %s", audit_err)
                 metrics["level_0_judge_correctness"] = "Audit Failed"
                 metrics["level_0_judge_score"] = 0.0
                 metrics["level_0_judge_reason"] = str(audit_err)
+                llm_call_log.append({"message_id": msg_id, "subject": subject, "stage": "level_0_judge_audit", "status": "error", "error": str(audit_err)})
                 continue # Skip caching if judge audit failed
 
             metrics["total_email_process_duration_sec"] = time.time() - email_start_time
@@ -293,8 +298,11 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         # Check for endpoint failures to support resume capability
         if "Proxy error:" in reason or "Rerank server prediction error:" in reason:
             logger.warning("Omitting email %s from results cache due to runtime LLM endpoint error.", msg_id)
+            llm_call_log.append({"message_id": msg_id, "subject": subject, "stage": "level_1_classification", "status": "error", "error": reason})
             continue
-            
+        llm_call_log.append({"message_id": msg_id, "subject": subject, "stage": "level_1_classification", "status": "success", "error": None})
+
+
         # 3. Level 2 Premium Summary (only if Level 1 suggested Level 2)
         if suggested_level == 2:
             if max_items is not None and l2_processed >= max_items:
@@ -313,14 +321,16 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                     # Check for endpoint failures
                     if "Failed to generate proxy summary due to error" in summary:
                         logger.warning("Omitting email %s from results cache due to Level 2 summarization failure.", msg_id)
+                        llm_call_log.append({"message_id": msg_id, "subject": subject, "stage": "level_2_summarization", "status": "error", "error": summary})
                         continue
-                        
+
                     metrics["summary"] = summary
                     metrics["score"] = summary_score
                     metrics["tag"] = l2_tag
                     metrics["level_2_duration_sec"] = l2_metrics["duration_sec"]
                     metrics["level_2_prompt_tokens"] = l2_metrics["prompt_tokens"]
                     metrics["level_2_completion_tokens"] = l2_metrics["completion_tokens"]
+                    llm_call_log.append({"message_id": msg_id, "subject": subject, "stage": "level_2_summarization", "status": "success", "error": None})
                 
         metrics["total_email_process_duration_sec"] = time.time() - email_start_time
         new_emails_duration += metrics["total_email_process_duration_sec"]
@@ -355,7 +365,11 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     settings.triage.tei_noise_enabled = old_tei_noise_enabled
     settings.triage.tei_noise_threshold = old_tei_noise_threshold
         
-    logger.info("Finished test run for '%s'. Results saved pretty to %s", config_name, output_file)
+    llm_success_count = sum(1 for c in llm_call_log if c["status"] == "success")
+    llm_error_count = len(llm_call_log) - llm_success_count
+    logger.info("Finished test run for '%s'. Results saved pretty to %s (LLM calls: %d success, %d error)", config_name, output_file, llm_success_count, llm_error_count)
+
+    return {"config_name": config_name, "llm_calls": llm_call_log}
 
 def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
@@ -412,13 +426,15 @@ def main() -> None:
             return
 
     logger.info("Loaded %d offline emails. Starting benchmarking configurations...", len(emails))
-    
+
+    run_summaries: List[Dict[str, Any]] = []
+
     for cfg in configs:
         cfg_name = cfg.get("name")
         triage_model = cfg.get("triage_model")
         summary_model = cfg.get("summary_model")
         output_file = workspace_dir / "auto_rater_data" / f"auto_rater_results_{cfg_name}.json"
-        
+
         if output_file.exists():
             try:
                 with open(output_file, "r", encoding="utf-8") as out_f:
@@ -431,12 +447,33 @@ def main() -> None:
                     logger.error("⚠️ WARNING: Model configuration strings changed for profile '%s' (Triage: %s -> %s, Summary: %s -> %s). Execution aborted to protect data integrity. Use -f/--force to override and overwrite.", cfg_name, existing_data.get("triage_model"), triage_model, existing_data.get("summary_model"), summary_model)
                     sys.exit(1)
                 logger.info("Force override active: Overwriting modified model pairs for configuration '%s'...", cfg_name)
-        
+
         try:
-            run_config(cfg, emails, workspace_dir, judge_model, level_0_judge_model, force_rerun=args.force, max_items=args.max_items, skip_summary=args.skip_summary)
+            result = run_config(cfg, emails, workspace_dir, judge_model, level_0_judge_model, force_rerun=args.force, max_items=args.max_items, skip_summary=args.skip_summary)
+            run_summaries.append({"config_name": cfg_name, "status": "completed", "llm_calls": result.get("llm_calls", [])})
         except Exception as e:
             logger.error("Configuration run failed for %s: %s", cfg_name, e)
+            run_summaries.append({"config_name": cfg_name, "status": "failed", "error": str(e), "llm_calls": []})
             continue
+
+    logger.info("=" * 60)
+    logger.info("RUN SUMMARY")
+    logger.info("=" * 60)
+    logger.info("Configurations run: %s", ", ".join(s["config_name"] for s in run_summaries) or "(none)")
+    for s in run_summaries:
+        if s["status"] == "failed":
+            logger.info("Configuration '%s': FAILED to run -- %s", s["config_name"], s["error"])
+            continue
+        calls = s["llm_calls"]
+        success = sum(1 for c in calls if c["status"] == "success")
+        error = len(calls) - success
+        logger.info("Configuration '%s': completed -- %d LLM call(s) succeeded, %d failed", s["config_name"], success, error)
+        for c in calls:
+            if c["status"] == "success":
+                logger.info("    [OK]    %s (%s) - %s", c["message_id"], c["stage"], c["subject"])
+            else:
+                logger.info("    [ERROR] %s (%s) - %s: %s", c["message_id"], c["stage"], c["subject"], c["error"])
+    logger.info("=" * 60)
 
 if __name__ == "__main__":
     main()

@@ -7,10 +7,15 @@ triage:
   confidence_threshold: 0.8
   triage_type: "llm"
   tei_url: "https://omniroute.local.shifamily.com/v1/rerank"
-  tei_model: "localai/qwen3-reranker-0.6b"
+  tei_model: "localai/cross-encoder"
   tei_router_enabled: false
   tei_noise_enabled: true
   tei_noise_threshold: 0.99
+  # localai/cross-encoder returns a raw, unbounded logit (e.g. 4.74, -5.58), not a
+  # calibrated [0,1] relevance_score -- normalize via sigmoid so tei_noise_threshold
+  # above is meaningful. Re-tune the threshold with auto_rater_rerank_eval.py once
+  # normalized scores are flowing.
+  tei_score_normalize: true
   whitelist_vip_senders: []
   whitelist_domains:
     - "@none"

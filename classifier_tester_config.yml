@@ -15,22 +15,22 @@ test_configurations:
     tei_model: "localai/qwen3-reranker-0.6b"
     # tei_api_key: "YOUR_RERANK_API_KEY"
 
-  - name: "baseline_deepseek_flash"
+  - name: "deepseek_flash"
     triage_type: "llm"
     # Optional overrides; if omitted, defaults to project environment / settings
     # url: "https://api.deepseek.com/v1"
     # api_key: "DEEPSEEK_API_KEY"
     model: "deepseek/deepseek-v4-flash"
-    
-  - name: "baseline_gemini_flash_lite"
+
+  - name: "gemini_flash_lite"
     triage_type: "llm"
     model: "gemini/gemini-3.1-flash-lite-preview"
-    
-  - name: "baseline_gemini_pro"
+
+  - name: "gemini_pro"
     triage_type: "llm"
     model: "gemini/gemini-3.1-pro-preview"
-    
-  - name: "baseline_deepseek_pro"
+
+  - name: "deepseek_pro"
     triage_type: "llm"
     model: "deepseek/deepseek-v4-pro"
 
@@ -43,5 +43,5 @@ judge:
   
   # Used if judger is "baseline".
   # Specifies the path to the baseline classification results.
-  #baseline_json_path: "auto_rater_data/auto_rater_results_baseline_platinum_human.json"
-  baseline_json_path: "auto_rater_data/auto_rater_results_baseline_deepseek_pro.json"
+  #baseline_json_path: "auto_rater_data/auto_rater_results_platinum_human.json"
+  baseline_json_path: "auto_rater_data/auto_rater_results_deepseek_pro.json"

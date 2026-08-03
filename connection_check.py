@@ -55,7 +55,11 @@ def test_rerank(url: Optional[str], api_key: Optional[str], model: Optional[str]
         response = httpx.post(url, headers=headers, json=payload, timeout=_TIMEOUT_SECONDS)
         response.raise_for_status()
         results = response.json().get("results", [])
-        return {"ok": True, "error": None, "detail": f"{len(results)} result(s) returned"}
+        score = results[0].get("relevance_score") if results else None
+        score_note = ""
+        if score is not None and not (0.0 <= score <= 1.0):
+            score_note = " -- outside [0,1]: this looks like a raw logit, consider enabling tei_score_normalize"
+        return {"ok": True, "error": None, "detail": f"{len(results)} result(s) returned, score={score}{score_note}"}
     except httpx.HTTPStatusError as exc:
         return {"ok": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
     except Exception as exc:

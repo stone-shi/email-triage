@@ -40,6 +40,7 @@ def make_fake_settings(**overrides):
     s.triage.tei_router_enabled = False
     s.triage.tei_noise_enabled = True
     s.triage.tei_noise_threshold = 0.9
+    s.triage.tei_score_normalize = False
     s.triage.whitelist_vip_senders = []
     s.triage.whitelist_domains = []
     s.triage.blacklist_keywords = []

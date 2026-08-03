@@ -19,6 +19,7 @@ const SECTIONS: { title: string; description?: string; keys: string[] }[] = [
       "triage.confidence_threshold", "triage.triage_type",
       "tei_url", "tei_model", "tei_api_key",
       "triage.tei_router_enabled", "triage.tei_noise_enabled", "triage.tei_noise_threshold",
+      "triage.tei_score_normalize",
     ],
   },
   {
@@ -71,6 +72,7 @@ const FIELD_LABELS: Record<string, string> = {
   "triage.tei_router_enabled": "Enable rerank noise filter",
   "triage.tei_noise_enabled": "Noise filter active",
   "triage.tei_noise_threshold": "Noise score threshold",
+  "triage.tei_score_normalize": "Normalize raw reranker scores (sigmoid)",
   "tei_url": "Reranker URL",
   "tei_model": "Reranker model",
   "tei_api_key": "Reranker API key",
@@ -122,6 +124,11 @@ const FIELD_HELP: Record<string, string> = {
     "to be filtered as Level 0 without an LLM call. Reranker scores aren't calibrated the same way as an " +
     "LLM's confidence -- keep this high and bias toward precision, since a false positive here silently " +
     "drops a real email.",
+  "triage.tei_score_normalize":
+    "Turn this on if your reranker returns a raw, unbounded score (e.g. a plain cross-encoder logit like " +
+    "4.7 or -5.6) instead of a calibrated 0-1 relevance_score the way Cohere/Jina-hosted rerank APIs do -- " +
+    "this applies a sigmoid so the threshold above is comparable across requests. Leave off if your reranker " +
+    "already returns scores in [0,1]; turning it on for an already-calibrated backend distorts the scores.",
   "tei_url": "OpenAI/Cohere-style /rerank endpoint (model + query + documents in, relevance scores out).",
   "tei_model": "Model name sent to the reranker endpoint above.",
   "tei_api_key": "API key for the reranker endpoint. Leave blank when saving to keep the currently stored key unchanged.",

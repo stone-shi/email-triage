@@ -1,5 +1,6 @@
 import sys
 import json
+import math
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -33,6 +34,7 @@ def mock_settings():
     triage_config.tei_api_key = "tei-key"
     triage_config.tei_noise_enabled = True
     triage_config.tei_noise_threshold = 0.999
+    triage_config.tei_score_normalize = False
     triage_config.whitelist_vip_senders = []
     triage_config.whitelist_domains = []
     triage_config.blacklist_keywords = [
@@ -473,6 +475,55 @@ class TestRerankRouter:
             )
         assert override_level is None
         assert confidence == 0.0
+
+
+class TestRerankScoreNormalize:
+    """tei_score_normalize: sigmoid-transform a raw cross-encoder logit into (0,1)."""
+
+    def test_normalize_off_returns_raw_logit(self, engine):
+        engine.settings.triage.tei_score_normalize = False
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"results": [{"index": 0, "relevance_score": 4.7425}]}
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            scores = engine._rerank("query", ["doc"])
+        assert scores == [4.7425]
+
+    def test_normalize_on_applies_sigmoid(self, engine):
+        engine.settings.triage.tei_score_normalize = True
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"results": [{"index": 0, "relevance_score": 4.7425}]}
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            scores = engine._rerank("query", ["doc"])
+        assert len(scores) == 1
+        assert 0.0 < scores[0] < 1.0
+        assert scores[0] == pytest.approx(1 / (1 + math.exp(-4.7425)), rel=1e-9)
+
+    def test_normalize_on_handles_large_negative_logit_without_overflow(self, engine):
+        engine.settings.triage.tei_score_normalize = True
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"results": [{"index": 0, "relevance_score": -700.0}]}
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            scores = engine._rerank("query", ["doc"])
+        assert scores[0] == pytest.approx(0.0, abs=1e-9)
+
+    def test_normalize_preserves_ranking_for_tei_classifier_path(self, engine):
+        """Sigmoid is monotonic -- normalizing must not flip which anchor wins."""
+        engine.settings.triage.triage_type = "tei"
+        engine.settings.triage.tei_score_normalize = True
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "results": [{"index": 0, "relevance_score": 2.1}, {"index": 1, "relevance_score": -3.4}],
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            suggested_level, reason, score, tag, metrics = engine.run_level_1_classification(
+                "boss@company.com", "Urgent", "Please review"
+            )
+        assert suggested_level == 2
+        assert 0.0 < score < 1.0
 
 
 class TestPydanticModels:

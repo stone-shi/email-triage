@@ -16,6 +16,61 @@ logging.basicConfig(
 )
 logger = logging.getLogger("auto_rater_summarizer")
 
+# Shared CSS shell -- same look as the other auto_rater_*.py HTML reports, so
+# they all read as one family of report.
+_HTML_STYLE = """
+:root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --page: #f9f9f7;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
+    --gridline: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+    --good: #0ca30c; --critical: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        color-scheme: dark;
+        --surface-1: #1a1a19; --page: #0d0d0d;
+        --text-primary: #ffffff; --text-secondary: #c3c2b7; --muted: #898781;
+        --gridline: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+        --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+        --good: #0ca30c; --critical: #e66767;
+    }
+}
+* { box-sizing: border-box; }
+body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page); color: var(--text-primary);
+    margin: 0; padding: 2rem; line-height: 1.5;
+}
+.container { max-width: 1180px; margin: 0 auto; }
+h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+h2 { font-size: 1.2rem; margin-top: 2.5rem; margin-bottom: 0.75rem; }
+p.subtitle { color: var(--text-secondary); margin-top: 0; }
+.muted { color: var(--text-secondary); }
+.tiles { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.tile {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 0.75rem;
+    padding: 0.75rem 1.1rem; min-width: 150px; flex: 1;
+}
+.tile-label { color: var(--text-secondary); font-size: 0.78rem; margin-bottom: 0.3rem; }
+.tile-value { font-size: 1.3rem; font-weight: 600; }
+.table-wrap { overflow-x: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 0.75rem; margin-bottom: 1rem; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--gridline); vertical-align: top; }
+th { color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.row-error td.num { color: var(--critical); }
+"""
+
+
+def html_escape(text) -> str:
+    if not isinstance(text, str):
+        text = str(text)
+    return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace('"', "&quot;").replace("'", "&#x27;"))
+
+
 def extract_json(text: str) -> str:
     import re
     text = text.strip()
@@ -100,24 +155,19 @@ def main() -> None:
     }
     http_client = httpx.Client(timeout=1800.0)
     
-    markdown_lines = []
-    markdown_lines.append("# 📝 Auto Rater: High-Fidelity Executive Summarization Quality Report")
-    markdown_lines.append(f"Evaluated with LLM-as-a-Judge using model: `{judge_model}`.\n")
-    
+    sections = []
+
     for res_file in result_files:
         with open(res_file, "r") as f:
             res_payload = json.load(f)
-            
+
         config_name = res_payload["configuration_name"]
         result_model = res_payload.get("triage_model", "unknown")
         results = res_payload["results"]
-        
-        markdown_lines.append(f"## 📌 Configuration Group: `{config_name}`")
-        markdown_lines.append("| Email Subject | Accuracy (1-10) | Conciseness (1-10) | Actionability (1-10) | Judge Rationale |")
-        markdown_lines.append("|---|---|---|---|---|")
-        
+
+        table_rows = []
         total_acc, total_con, total_act, scored_count = 0, 0, 0, 0
-        
+
         for r in results:
             if r["triage_level"] != 2 or not r.get("summary"):
                 continue
@@ -195,31 +245,76 @@ def main() -> None:
                 total_con += con
                 total_act += act
                 scored_count += 1
-                
-                markdown_lines.append(f"| {subject} | {acc}/10 | {con}/10 | {act}/10 | {rat} |")
+
+                table_rows.append(f"""<tr>
+                    <td>{html_escape(subject)}</td>
+                    <td class="num">{acc}/10</td>
+                    <td class="num">{con}/10</td>
+                    <td class="num">{act}/10</td>
+                    <td>{html_escape(rat)}</td>
+                </tr>""")
             except Exception as e:
                 logger.error("Failed to judge summary quality for email '%s': %s", subject, e)
                 if 'content' in locals():
                     logger.error("Raw unparsed judge response was: \n%s", content)
-                markdown_lines.append(f"| {subject} | Error | Error | Error | Audit call failed: {str(e)} |")
-                
+                table_rows.append(f"""<tr class="row-error">
+                    <td>{html_escape(subject)}</td>
+                    <td class="num">Error</td><td class="num">Error</td><td class="num">Error</td>
+                    <td>Audit call failed: {html_escape(str(e))}</td>
+                </tr>""")
+
         if scored_count > 0:
             avg_acc = total_acc / scored_count
             avg_con = total_con / scored_count
             avg_act = total_act / scored_count
-            markdown_lines.append(f"\n### 📊 Aggregate Score Averages for `{config_name}`:")
-            markdown_lines.append(f"- **Average Summary Accuracy**: {avg_acc:.2f}/10")
-            markdown_lines.append(f"- **Average Summary Conciseness**: {avg_con:.2f}/10")
-            markdown_lines.append(f"- **Average Summary Actionability**: {avg_act:.2f}/10\n")
+            tiles = f"""
+            <div class="tiles">
+                <div class="tile"><div class="tile-label">Avg accuracy</div><div class="tile-value">{avg_acc:.2f}/10</div></div>
+                <div class="tile"><div class="tile-label">Avg conciseness</div><div class="tile-value">{avg_con:.2f}/10</div></div>
+                <div class="tile"><div class="tile-label">Avg actionability</div><div class="tile-value">{avg_act:.2f}/10</div></div>
+                <div class="tile"><div class="tile-label">Summaries scored</div><div class="tile-value">{scored_count}</div></div>
+            </div>
+            """
+            body = f"""
+            {tiles}
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Email subject</th><th>Accuracy</th><th>Conciseness</th><th>Actionability</th><th>Judge rationale</th></tr></thead>
+                    <tbody>{"".join(table_rows)}</tbody>
+                </table>
+            </div>
+            """
         else:
-            markdown_lines.append("\n*No escalated summaries generated to evaluate for this configuration.*\n")
-            
-    output_report_path = data_dir / "auto_rater_summarizer_report.md"
+            body = '<p class="muted">No escalated summaries generated to evaluate for this configuration.</p>'
+
+        sections.append(f"""
+        <h2>📌 {html_escape(config_name)}</h2>
+        {body}
+        """)
+
+    report = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auto Rater: Executive Summarization Quality Report</title>
+<style>{_HTML_STYLE}</style>
+</head>
+<body>
+<div class="container">
+    <h1>📝 Auto Rater: High-Fidelity Executive Summarization Quality Report</h1>
+    <p class="subtitle">Evaluated with LLM-as-a-Judge using model: <code>{html_escape(judge_model)}</code>.</p>
+    {"".join(sections)}
+</div>
+</body>
+</html>
+"""
+
+    output_report_path = data_dir / "auto_rater_summarizer_report.html"
     with open(output_report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(markdown_lines))
-        
+        f.write(report)
+
     logger.info("Successfully compiled Summarization Quality Report to %s", output_report_path)
-    print("\n--- Quality Report Saved ---\n")
 
 if __name__ == "__main__":
     main()

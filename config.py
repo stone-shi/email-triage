@@ -163,6 +163,11 @@ class TriageSettings(BaseModel):
     tei_router_enabled: bool = False
     tei_noise_enabled: bool = True
     tei_noise_threshold: float = 0.999
+    # Off by default -- only turn on for a reranker backend that returns a raw,
+    # unbounded cross-encoder logit instead of a calibrated [0,1] relevance_score
+    # (see EmailTriageEngine._rerank). Enabling this against an already-calibrated
+    # backend would double-transform a correct score into a meaningless one.
+    tei_score_normalize: bool = False
     whitelist_vip_senders: List[str] = []
     whitelist_domains: List[str] = []
     blacklist_keywords: List[str] = [
@@ -315,6 +320,8 @@ class Settings(BaseSettings):
                     self.triage.tei_noise_enabled = bool(triage_data["tei_noise_enabled"])
                 if "tei_noise_threshold" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_NOISE_THRESHOLD"):
                     self.triage.tei_noise_threshold = float(triage_data["tei_noise_threshold"])
+                if "tei_score_normalize" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__TEI_SCORE_NORMALIZE"):
+                    self.triage.tei_score_normalize = bool(triage_data["tei_score_normalize"])
                 if "whitelist_vip_senders" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__WHITELIST_VIP_SENDERS"):
                     self.triage.whitelist_vip_senders = triage_data["whitelist_vip_senders"]
                 if "whitelist_domains" in triage_data and should_apply("EMAIL_TRIAGE_TRIAGE__WHITELIST_DOMAINS"):

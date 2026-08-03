@@ -21,6 +21,7 @@ class TestTriageSettings:
         assert ts.triage_type == "llm"
         assert ts.tei_router_enabled is False
         assert ts.tei_noise_threshold == 0.999
+        assert ts.tei_score_normalize is False
         assert ts.whitelist_vip_senders == []
         assert ts.whitelist_domains == []
         assert isinstance(ts.blacklist_keywords, list)

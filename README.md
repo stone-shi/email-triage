@@ -193,7 +193,12 @@ The system incorporates a high-fidelity automated testing suite called **Auto Ra
    ```
 5. **Missing Tag Backfill Utility [NEW]**: Evaluates and backfills granular classification tags for older existing profile benchmarking datasets:
    ```bash
-   ./venv/bin/python3 add_missing_tags.py --profile baseline_gemini_pro
+   ./venv/bin/python3 add_missing_tags.py --profile gemini_pro
+   ```
+6. **Rerank Noise Filter Evaluator**: Judges the Level 0.5 rerank noise filter against an independent judge model, swept across a range of noise-score thresholds, reporting precision/recall/F1 (and concrete false-positive/false-negative examples) so you can pick a threshold instead of guessing one:
+   ```bash
+   ./venv/bin/python3 auto_rater_rerank_eval.py
+   ./venv/bin/python3 auto_rater_rerank_eval.py --golden  # ground truth from a human-labeled results file instead of a judge model
    ```
 
 ---

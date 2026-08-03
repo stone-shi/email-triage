@@ -12,11 +12,11 @@ Copy and paste the block below into your LLM interface, replacing the bracketed 
 You are an expert AI Architect and Senior Data Scientist. Analyze the complete benchmarking results from both the automated summarization quality evaluations and the dual-standard triage alignment reports to produce a unified, highly polished executive evaluation document.
 
 ### Inputs Provided:
-1. **Summarization Quality Report** (`auto_rater_summarizer_report.md`):
-[PASTE CONTENTS OF auto_rater_summarizer_report.md HERE]
+1. **Summarization Quality Report** (`auto_rater_summarizer_report.html`):
+[PASTE CONTENTS OF auto_rater_summarizer_report.html HERE]
 
-2. **Triage Classification Performance Report** (`auto_rater_triage_report.md`):
-[PASTE CONTENTS OF auto_rater_triage_report.md HERE]
+2. **Triage Classification Performance Report** (`auto_rater_triage_report.html`):
+[PASTE CONTENTS OF auto_rater_triage_report.html HERE]
 
 ### Your Goal:
 Generate a complete, comprehensive comparative analysis evaluating the performance of each language model setup across BOTH operational triage boundaries and high-fidelity executive summarization vectors.

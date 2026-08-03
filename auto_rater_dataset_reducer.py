@@ -62,11 +62,11 @@ def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
     data_dir = (workspace_dir / "auto_rater_data").resolve()
     
-    source_file = data_dir / "auto_rater_results_baseline_deepseek_pro.json"
+    source_file = data_dir / "auto_rater_results_deepseek_pro.json"
     offline_file = data_dir / "offline_emails.json"
-    
+
     if not source_file.exists() or not offline_file.exists():
-        logger.error("Required files baseline_deepseek_pro or offline_emails.json missing.")
+        logger.error("Required files deepseek_pro or offline_emails.json missing.")
         sys.exit(1)
         
     # Step 0: Safe physical backup of every JSON file to prevent data loss

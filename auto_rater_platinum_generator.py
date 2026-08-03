@@ -39,18 +39,18 @@ def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
     data_dir = (workspace_dir / "auto_rater_data").resolve()
     
-    source_file = data_dir / "auto_rater_results_baseline_deepseek_pro.json"
-    output_file = data_dir / "auto_rater_results_baseline_platinum_human.json"
-    
+    source_file = data_dir / "auto_rater_results_deepseek_pro.json"
+    output_file = data_dir / "auto_rater_results_platinum_human.json"
+
     if not source_file.exists():
         logger.error("Source file %s does not exist.", source_file)
         sys.exit(1)
-        
+
     with open(source_file, "r", encoding="utf-8") as f:
         source_payload = json.load(f)
-        
+
     results = source_payload.get("results", [])
-    logger.info("Loaded %d records from baseline_deepseek_pro.", len(results))
+    logger.info("Loaded %d records from deepseek_pro.", len(results))
     
     results_by_level: Dict[int, List[Dict[str, Any]]] = {0: [], 1: [], 2: []}
     for r in results:
@@ -149,7 +149,7 @@ def main() -> None:
             platinum_results.append(rec_copy)
             
     output_payload = {
-        "configuration_name": "baseline_platinum_human",
+        "configuration_name": "platinum_human",
         "triage_model": "human_reviewer",
         "summary_model": "human_reviewer",
         "total_processing_all_emails_duration_sec": 0.0,

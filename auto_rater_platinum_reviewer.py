@@ -45,7 +45,7 @@ def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
     data_dir = (workspace_dir / "auto_rater_data").resolve()
     
-    platinum_file = data_dir / "auto_rater_results_baseline_platinum_human.json"
+    platinum_file = data_dir / "auto_rater_results_platinum_human.json"
     offline_file = data_dir / "offline_emails.json"
     
     if not platinum_file.exists():

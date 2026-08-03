@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 import json
 import time
@@ -15,6 +16,15 @@ logger = logging.getLogger("email_triage.pipeline")
 # Anchor documents reranked against each email to derive an importance/noise signal
 RERANK_IMPORTANT_ANCHOR = "An urgent personal message from a specific person requiring your direct reply, decision, or action, such as a work request, deadline, bill, or critical account issue."
 RERANK_NOISE_ANCHOR = "An automated system notification, media download alert, promotional marketing email, newsletter, or subscription update that does not require any reply or action from you."
+
+
+def _sigmoid(x: float) -> float:
+    """Numerically-stable sigmoid, used to map a raw cross-encoder logit into (0,1)."""
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
 
 class TriageDecision(BaseModel):
     suggested_level: int = Field(description="Suggested triage level: 0 (noise), 1 (notification/promotion), 2 (important)")
@@ -96,6 +106,17 @@ class EmailTriageEngine:
         Calls the reranker's /rerank endpoint and returns relevance scores in the
         same order as `documents` (the API itself returns results sorted by score,
         so we re-index them by the `index` field to restore input order).
+
+        Not every /rerank backend returns a calibrated [0,1] relevance_score the
+        way Cohere/Jina's hosted APIs do -- a raw cross-encoder (e.g. a
+        sentence-transformers CrossEncoder served as-is) instead returns an
+        unbounded pre-sigmoid logit (can be well outside [0,1], negative for a
+        poor match). Comparing that directly against tei_noise_threshold/
+        confidence_threshold (both authored assuming a 0-1 scale) would be
+        meaningless, so triage.tei_score_normalize (off by default, to avoid
+        double-transforming a backend that's already calibrated) applies a
+        sigmoid to bring raw logits back into (0,1) -- monotonic, so it never
+        changes which of two scores is larger, only rescales the magnitude.
         """
         headers = {"Content-Type": "application/json"}
         if getattr(self.settings.triage, "tei_api_key", None):
@@ -115,6 +136,9 @@ class EmailTriageEngine:
             idx = r.get("index")
             if idx is not None and 0 <= idx < len(scores):
                 scores[idx] = r.get("relevance_score", 0.0)
+
+        if getattr(self.settings.triage, "tei_score_normalize", False):
+            scores = [_sigmoid(s) for s in scores]
         return scores
 
     def is_vip_sender(self, sender: str) -> bool:

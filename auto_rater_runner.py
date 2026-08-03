@@ -34,7 +34,7 @@ def extract_json(text: str) -> str:
     
     return text
 
-def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False, max_items: int = None) -> None:
+def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False, max_items: int = None, skip_summary: bool = False) -> None:
     config_name = config["name"]
     triage_model = config["triage_model"]
     summary_model = config["summary_model"]
@@ -165,8 +165,10 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             metrics["triage_level"] = 2
             metrics["reason"] = "VIP Sender Direct Escalation"
             metrics["tag"] = "vip"
-            
-            if not full_body or len(full_body.strip()) < 10:
+
+            if skip_summary:
+                pass  # leave summary as None -- filter-quality-only run
+            elif not full_body or len(full_body.strip()) < 10:
                 metrics["summary"] = "No substantive content to summarize."
             else:
                 l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
@@ -301,7 +303,9 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
             else:
                 l2_processed += 1
                 metrics["triage_level"] = 2
-                if not full_body or len(full_body.strip()) < 10:
+                if skip_summary:
+                    pass  # leave summary as None -- filter-quality-only run
+                elif not full_body or len(full_body.strip()) < 10:
                     metrics["summary"] = "No substantive content to summarize."
                 else:
                     summary, summary_score, l2_tag, l2_metrics = engine.run_level_2_summarization(subject, full_body, model_name=summary_model)
@@ -384,7 +388,11 @@ def main() -> None:
     parser.add_argument("--run", type=str, help="Name of a single test configuration pair to execute specifically")
     parser.add_argument("-f", "--force", action="store_true", help="Force execution and overwrite existing benchmark results file")
     parser.add_argument("--max-items", type=int, help="Maximum items to process per triage level tier (useful for fast testing)")
+    parser.add_argument("--skip-summary", action="store_true", help="Skip Level 2 summarization entirely -- use when you only want to check triage/filter quality, not summary quality")
     args = parser.parse_args()
+
+    if args.skip_summary:
+        logger.info("--skip-summary active: Level 2 summaries will not be generated (summary field stays null).")
     
     if args.run:
         configs = [c for c in configs if c.get("name") == args.run]
@@ -415,7 +423,7 @@ def main() -> None:
                 logger.info("Force override active: Overwriting modified model pairs for configuration '%s'...", cfg_name)
         
         try:
-            run_config(cfg, emails, workspace_dir, judge_model, level_0_judge_model, force_rerun=args.force, max_items=args.max_items)
+            run_config(cfg, emails, workspace_dir, judge_model, level_0_judge_model, force_rerun=args.force, max_items=args.max_items, skip_summary=args.skip_summary)
         except Exception as e:
             logger.error("Configuration run failed for %s: %s", cfg_name, e)
             continue

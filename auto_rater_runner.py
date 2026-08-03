@@ -18,6 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("auto_rater_runner")
 
+# Omniroute caches identical requests; benchmarking needs a fresh completion every time.
+OMNIROUTE_NO_CACHE_HEADER = {"X-Omniroute-Skip-Cache": "true"}
+
 def extract_json(text: str) -> str:
     import re
     text = text.strip()
@@ -62,9 +65,10 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     base_url = settings.llm_base_url.rstrip('/')
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.llm_api_key}"
+        "Authorization": f"Bearer {settings.llm_api_key}",
+        **OMNIROUTE_NO_CACHE_HEADER,
     }
-    
+
     # Load external prompts if present
     prompts_path = workspace_dir / "prompts.yml"
     prompts = {}
@@ -106,7 +110,10 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     # Initialize triage engine for static filtering logic (Level 0)
     dummy_db = EmailDB(db_path=workspace_dir / "email_cache.db")
     engine = EmailTriageEngine(dummy_db)
-    
+    engine.headers.update(OMNIROUTE_NO_CACHE_HEADER)
+    engine.triage_headers.update(OMNIROUTE_NO_CACHE_HEADER)
+    engine.summary_headers.update(OMNIROUTE_NO_CACHE_HEADER)
+
     new_emails_duration = 0.0
     processed_any_new = False
     
@@ -452,7 +459,8 @@ def main() -> None:
         base_url = settings.llm_base_url.rstrip('/')
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.llm_api_key}"
+            "Authorization": f"Bearer {settings.llm_api_key}",
+            **OMNIROUTE_NO_CACHE_HEADER,
         }
         http_client = httpx.Client(timeout=120.0)
         model_results: Dict[str, Tuple[bool, str]] = {}

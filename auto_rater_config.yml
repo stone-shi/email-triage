@@ -65,5 +65,5 @@ test_configurations:
 download_count: 100
 judge_model: "gemini/gemini-3.1-pro-preview"
 level_0_judge_model: "gemini/gemini-3.1-flash-lite-preview"
-baseline_configuration_name: "deepseek_pro"
+baseline_configuration_name: "gpt-5.6-sol"
 log_level: "INFO"

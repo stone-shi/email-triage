@@ -5,7 +5,7 @@ import yaml
 import sys
 import time
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import httpx
 from config import settings
 from triage import EmailTriageEngine
@@ -371,6 +371,28 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
 
     return {"config_name": config_name, "llm_calls": llm_call_log}
 
+def test_llm_reachability(model_name: str, base_url: str, headers: Dict[str, str], http_client: httpx.Client) -> Tuple[bool, str]:
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Write a detailed paragraph (at least 100 words) explaining what an email triage pipeline does."}
+        ],
+        "max_tokens": 200,
+        "temperature": 0.2,
+        "include_reasoning": False
+    }
+    try:
+        resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+        resp.raise_for_status()
+        usage = resp.json().get("usage", {})
+        completion_tokens = usage.get("completion_tokens", 0)
+        if completion_tokens <= 64:
+            return False, f"reachable but only returned {completion_tokens} completion tokens (need > 64)"
+        return True, f"reachable, {completion_tokens} completion tokens returned"
+    except Exception as e:
+        return False, f"unreachable or request failed: {e}"
+
 def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()
     config_path = workspace_dir / "auto_rater_config.yml"
@@ -404,6 +426,7 @@ def main() -> None:
     parser.add_argument("--max-items", type=int, help="Maximum items to process per triage level tier (useful for fast testing)")
     parser.add_argument("--skip-summary", action="store_true", help="Skip Level 2 summarization entirely -- use when you only want to check triage/filter quality, not summary quality")
     parser.add_argument("--only-missing", action="store_true", help="When --run is not given, only run configurations that don't already have a results JSON file")
+    parser.add_argument("--test", action="store_true", help="Test each configuration's triage_model/summary_model for LLM reachability and completion_tokens > 64, then exit without running the benchmark")
     args = parser.parse_args()
 
     if args.skip_summary:
@@ -424,6 +447,33 @@ def main() -> None:
         if not configs:
             logger.info("No configurations pending -- all already have results.")
             return
+
+    if args.test:
+        base_url = settings.llm_base_url.rstrip('/')
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {settings.llm_api_key}"
+        }
+        http_client = httpx.Client(timeout=120.0)
+        model_results: Dict[str, Tuple[bool, str]] = {}
+        all_passed = True
+        logger.info("=" * 60)
+        logger.info("LLM CONNECTIVITY TEST")
+        logger.info("=" * 60)
+        for cfg in configs:
+            cfg_name = cfg.get("name")
+            logger.info("Configuration '%s':", cfg_name)
+            for role in ("triage_model", "summary_model"):
+                model_name = cfg.get(role)
+                if model_name not in model_results:
+                    model_results[model_name] = test_llm_reachability(model_name, base_url, headers, http_client)
+                passed, detail = model_results[model_name]
+                all_passed = all_passed and passed
+                logger.info("    [%s] %s (%s) - %s", "PASS" if passed else "FAIL", model_name, role, detail)
+        logger.info("=" * 60)
+        logger.info("LLM connectivity test %s", "PASSED" if all_passed else "FAILED")
+        logger.info("=" * 60)
+        sys.exit(0 if all_passed else 1)
 
     logger.info("Loaded %d offline emails. Starting benchmarking configurations...", len(emails))
 

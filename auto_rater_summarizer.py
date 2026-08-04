@@ -16,6 +16,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger("auto_rater_summarizer")
 
+# Omniroute caches identical requests and serves the hit in ~0.01s. For the judge that's not just
+# a latency artifact: entries written by an older code path come back mangled (reasoning prose
+# prefixed to the JSON, and the object repeated), which no amount of parser hardening can score.
+# Same header (and same load-bearing spelling) as auto_rater_runner.py -- an unrecognized name is
+# silently ignored with a 200 still served from cache. This module keeps its own on-disk score
+# cache, so bypassing the proxy's cache costs nothing across repeated runs.
+OMNIROUTE_NO_CACHE_HEADER = {"X-Omniroute-No-Cache": "true"}
+
+# Ceiling on completion tokens for the judge call. Sized like triage.py's/auto_rater_runner.py's
+# constants: big enough that a reasoning judge still reaches its JSON verdict after spending most
+# of the budget on hidden thinking tokens, since a mid-thought truncation returns empty content.
+MAX_TOKENS_SUMMARY_JUDGE = 3072
+
 # Shared CSS shell -- same look as the other auto_rater_*.py HTML reports, so
 # they all read as one family of report.
 _HTML_STYLE = """
@@ -84,7 +97,30 @@ def extract_json(text: str) -> str:
     
     # Robustness fix: handle invalid escapes like \'
     text = text.replace("\\'", "'")
-    
+
+    # Robustness fix: some judge models leak reasoning prose around the answer (this endpoint does
+    # it even with include_reasoning=false) and occasionally repeat the object. Keep only the first
+    # balanced {...} span so a prefix/suffix doesn't fail the whole parse.
+    start = text.find("{")
+    if start > -1:
+        depth, in_str, escaped = 0, False, False
+        for i, ch in enumerate(text[start:], start):
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+
     return text
 
 def main() -> None:
@@ -151,7 +187,8 @@ def main() -> None:
     base_url = settings.llm_base_url.rstrip('/')
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.llm_api_key}"
+        "Authorization": f"Bearer {settings.llm_api_key}",
+        **OMNIROUTE_NO_CACHE_HEADER,
     }
     http_client = httpx.Client(timeout=1800.0)
     
@@ -184,6 +221,11 @@ def main() -> None:
             # Composite Primary Key lookup match query signature string
             cache_key = f"{result_model}||{judge_model}||{msg_id}||{summary_text}"
             
+            # Reset per-email so the error path below can't report a *previous* email's response
+            # (and can report the raw body when the failure is in the envelope, not the content).
+            resp = None
+            content = None
+
             cache_hit = False
             if cache_key in judge_cache:
                 logger.info("Cache Hit: Reusing cached quality metrics for email: '%s'", subject)
@@ -216,12 +258,21 @@ def main() -> None:
                             {"role": "user", "content": judge_prompt}
                         ],
                         "temperature": 0.0,
-                        "include_reasoning": False
+                        "include_reasoning": False,
+                        # Must match what the rest of the suite sends: the proxy streams Server-Sent
+                        # Events unless streaming is explicitly declined, and resp.json() cannot
+                        # parse an SSE body (it fails with "Expecting value: line 1 column 1").
+                        "stream": False,
+                        "max_tokens": MAX_TOKENS_SUMMARY_JUDGE
                     }
                     logger.info("Requesting quality score from judge for email: %s", subject)
                     resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
                     resp.raise_for_status()
-                    
+                    if "text/event-stream" in resp.headers.get("content-type", ""):
+                        raise RuntimeError(
+                            "judge endpoint returned a streaming (SSE) response despite stream=false"
+                        )
+
                     judge_resp = resp.json()
                     usage = judge_resp.get("usage", {})
                     content = judge_resp["choices"][0]["message"]["content"]
@@ -255,8 +306,13 @@ def main() -> None:
                 </tr>""")
             except Exception as e:
                 logger.error("Failed to judge summary quality for email '%s': %s", subject, e)
-                if 'content' in locals():
-                    logger.error("Raw unparsed judge response was: \n%s", content)
+                if content is not None:
+                    logger.error("Raw unparsed judge content was: \n%s", content)
+                elif resp is not None:
+                    logger.error(
+                        "Judge HTTP %s (content-type %r), raw body was: \n%s",
+                        resp.status_code, resp.headers.get("content-type"), resp.text[:2000],
+                    )
                 table_rows.append(f"""<tr class="row-error">
                     <td>{html_escape(subject)}</td>
                     <td class="num">Error</td><td class="num">Error</td><td class="num">Error</td>

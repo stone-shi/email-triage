@@ -7,23 +7,7 @@ import time
 import httpx
 from pathlib import Path
 from typing import Dict, Any, List
-
-# Reuse prompt extraction helper from runner if possible, or replicate
-def extract_json(text: str) -> str:
-    import re
-    text = text.strip()
-    if text.startswith("```"):
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
-    
-    # Robustness fix: handle unquoted tags from lazy models
-    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
-    
-    # Robustness fix: handle invalid escapes like \'
-    text = text.replace("\\'", "'")
-    
-    return text
+from triage import extract_json
 
 logging.basicConfig(
     level=logging.INFO,

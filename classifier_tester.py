@@ -12,6 +12,7 @@ import httpx
 
 # Import project settings and helper files
 from config import settings
+from triage import extract_json
 from db import EmailDB
 
 logging.basicConfig(
@@ -21,20 +22,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("classifier_tester")
 
-def extract_json(text: str) -> str:
-    """Extracts JSON content from text, stripping markdown code blocks and fixing unquoted strings."""
-    import re
-    text = text.strip()
-    if text.startswith("```"):
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
-    
-    # Handle unquoted tags from lazy models
-    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
-    # Handle invalid escapes
-    text = text.replace("\\'", "'")
-    return text
 
 RERANK_IMPORTANT_ANCHOR = "An urgent personal message from a specific person requiring your direct reply, decision, or action, such as a work request, deadline, bill, or critical account issue."
 RERANK_NOISE_ANCHOR = "An automated system notification, media download alert, promotional marketing email, newsletter, or subscription update that does not require any reply or action from you."

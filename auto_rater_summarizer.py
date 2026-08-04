@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 import httpx
 from config import settings
+from triage import extract_json
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,45 +84,6 @@ def html_escape(text) -> str:
     return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 .replace('"', "&quot;").replace("'", "&#x27;"))
 
-
-def extract_json(text: str) -> str:
-    import re
-    text = text.strip()
-    if text.startswith("```"):
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
-    
-    # Robustness fix: handle unquoted tags from lazy models
-    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
-    
-    # Robustness fix: handle invalid escapes like \'
-    text = text.replace("\\'", "'")
-
-    # Robustness fix: some judge models leak reasoning prose around the answer (this endpoint does
-    # it even with include_reasoning=false) and occasionally repeat the object. Keep only the first
-    # balanced {...} span so a prefix/suffix doesn't fail the whole parse.
-    start = text.find("{")
-    if start > -1:
-        depth, in_str, escaped = 0, False, False
-        for i, ch in enumerate(text[start:], start):
-            if in_str:
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == '"':
-                    in_str = False
-            elif ch == '"':
-                in_str = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return text[start:i + 1]
-
-    return text
 
 def main() -> None:
     workspace_dir = Path(__file__).parent.resolve()

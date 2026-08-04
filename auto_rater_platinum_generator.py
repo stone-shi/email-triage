@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 import httpx
 from config import settings
+from triage import extract_json
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,21 +14,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger("platinum_generator")
-def extract_json(text: str) -> str:
-    import re
-    text = text.strip()
-    if text.startswith("```"):
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
-
-    # Robustness fix: handle unquoted tags from lazy models
-    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
-    
-    # Robustness fix: handle invalid escapes like \'
-    text = text.replace("\\'", "'")
-    
-    return text
 
 def evenly_spaced_sampling(items: List[Dict[str, Any]], count: int) -> List[Dict[str, Any]]:
     if len(items) <= count:

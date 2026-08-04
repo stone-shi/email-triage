@@ -9,7 +9,7 @@ from typing import List, Dict, Any, Tuple, Optional
 import httpx
 import prompts_store
 from config import settings
-from triage import EmailTriageEngine, MAX_TOKENS_LEVEL_2
+from triage import EmailTriageEngine, MAX_TOKENS_LEVEL_2, extract_json
 from db import EmailDB
 
 logging.basicConfig(
@@ -33,21 +33,6 @@ OMNIROUTE_NO_CACHE_HEADER = {"X-Omniroute-No-Cache": "true"}
 MAX_TOKENS_LEVEL_0_JUDGE = 3072
 MAX_TOKENS_REACHABILITY_PROBE = 4096
 
-def extract_json(text: str) -> str:
-    import re
-    text = text.strip()
-    if text.startswith("```"):
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
-    
-    # Robustness fix: handle unquoted tags from lazy models
-    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
-    
-    # Robustness fix: handle invalid escapes like \'
-    text = text.replace("\\'", "'")
-    
-    return text
 
 def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_dir: Path, judge_model: str, level_0_judge_model: str, force_rerun: bool = False, max_items: int = None, skip_summary: bool = False) -> Dict[str, Any]:
     config_name = config["name"]

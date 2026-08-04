@@ -96,7 +96,6 @@ def _alignment_table(configs_data: Dict[str, Any], ground_truth: Dict[str, bool]
     baseline and human-platinum alignment sections -- same math, different
     ground-truth source."""
     rows = []
-    best_f1 = None
     for name, data in configs_data.items():
         if name == exclude_name:
             continue
@@ -126,24 +125,28 @@ def _alignment_table(configs_data: Dict[str, Any], ground_truth: Dict[str, bool]
             else:
                 tn += 1
 
-        total = tp + fp + fn + tn
-        accuracy = (tp + tn) / total if total else 0.0
+        scored = tp + fp + fn + tn
+        # Everything the config saw, including the level-0 rows and the ones missing
+        # from ground truth that the confusion matrix skips -- this is the count that
+        # should match the dataset size (e.g. 100 or 20).
+        total_samples = len(data["results"])
+        accuracy = (tp + tn) / scored if scored else 0.0
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
         tag_acc = (tag_matches / tag_total * 100) if tag_total else None
-        rows.append((name, accuracy, precision, recall, f1, tp, fp, fn, tn, tag_acc))
-        if best_f1 is None or f1 > best_f1[1]:
-            best_f1 = (name, f1)
+        rows.append((name, accuracy, precision, recall, f1, tp, fp, fn, tn, tag_acc, scored, total_samples))
 
     if not rows:
         return ""
 
+    rows.sort(key=lambda r: r[4], reverse=True)
+
     show_tag_col = tags is not None
     header_extra = "<th>Tag match</th>" if show_tag_col else ""
     body_rows = []
-    for name, accuracy, precision, recall, f1, tp, fp, fn, tn, tag_acc in rows:
-        is_best = best_f1 is not None and name == best_f1[0]
+    for idx, (name, accuracy, precision, recall, f1, tp, fp, fn, tn, tag_acc, scored, total_samples) in enumerate(rows):
+        is_best = idx == 0 and f1 > 0
         tag_cell = f"<td class=\"num\">{tag_acc:.1f}%</td>" if show_tag_col and tag_acc is not None else ("<td class=\"num muted\">n/a</td>" if show_tag_col else "")
         body_rows.append(f"""<tr class="{'row-best' if is_best else ''}">
             <td>{html_escape(name)}</td>
@@ -152,6 +155,8 @@ def _alignment_table(configs_data: Dict[str, Any], ground_truth: Dict[str, bool]
             <td class="num">{recall*100:.1f}%</td>
             <td class="num">{f1:.3f}</td>
             <td class="num">{tp}</td><td class="num">{fp}</td><td class="num">{fn}</td><td class="num">{tn}</td>
+            <td class="num">{scored}</td>
+            <td class="num">{total_samples}</td>
             {tag_cell}
         </tr>""")
 
@@ -160,37 +165,51 @@ def _alignment_table(configs_data: Dict[str, Any], ground_truth: Dict[str, bool]
         <table>
             <thead><tr>
                 <th>Configuration</th><th>Accuracy</th><th>Precision</th><th>Recall</th><th>F1</th>
-                <th>TP</th><th>FP</th><th>FN</th><th>TN</th>{header_extra}
+                <th>TP</th><th>FP</th><th>FN</th><th>TN</th><th>Scored</th><th>Total samples</th>{header_extra}
             </tr></thead>
             <tbody>{"".join(body_rows)}</tbody>
         </table>
     </div>
-    """
+    <p class="muted">Sorted by F1, highest first. <em>Scored</em> = TP+FP+FN+TN, i.e. the rows the
+    confusion matrix actually covers (level-0 predictions and messages absent from the ground truth are
+    excluded); <em>Total samples</em> = every message in the config's result file.</p>"""
 
 
 def _summary_quality_table(configs_data: Dict[str, Any], judge_cache: Dict[str, Any], judge_model: str,
                             important_msg_ids: Optional[List[str]] = None) -> str:
-    rows = []
+    scored = []
+    unscored = []
     for name, data in configs_data.items():
         stats = get_summary_stats(data, judge_cache, judge_model, important_msg_ids=important_msg_ids)
         if stats:
-            rows.append(f"""<tr>
-                <td>{html_escape(name)}</td>
-                <td class="num">{stats['accuracy']:.2f}/10</td>
-                <td class="num">{stats['conciseness']:.2f}/10</td>
-                <td class="num">{stats['actionability']:.2f}/10</td>
-                <td class="num">{stats['count']}</td>
-            </tr>""")
+            # Overall = unweighted mean of the three rubric dimensions, same 1-10 scale.
+            overall = (stats["accuracy"] + stats["conciseness"] + stats["actionability"]) / 3
+            scored.append((name, stats, overall))
         else:
-            rows.append(f"""<tr><td>{html_escape(name)}</td><td class="num">N/A</td><td class="num">N/A</td><td class="num">N/A</td><td class="num">0</td></tr>""")
+            unscored.append(name)
+
+    scored.sort(key=lambda r: r[2], reverse=True)
+
+    rows = []
+    for idx, (name, stats, overall) in enumerate(scored):
+        rows.append(f"""<tr class="{'row-best' if idx == 0 else ''}">
+            <td>{html_escape(name)}</td>
+            <td class="num">{overall:.2f}/10</td>
+            <td class="num">{stats['accuracy']:.2f}/10</td>
+            <td class="num">{stats['conciseness']:.2f}/10</td>
+            <td class="num">{stats['actionability']:.2f}/10</td>
+            <td class="num">{stats['count']}</td>
+        </tr>""")
+    for name in unscored:
+        rows.append(f"""<tr><td>{html_escape(name)}</td><td class="num">N/A</td><td class="num">N/A</td><td class="num">N/A</td><td class="num">N/A</td><td class="num">0</td></tr>""")
     return f"""
     <div class="table-wrap">
         <table>
-            <thead><tr><th>Configuration</th><th>Avg accuracy</th><th>Avg conciseness</th><th>Avg actionability</th><th>Sample count</th></tr></thead>
+            <thead><tr><th>Configuration</th><th>Overall score</th><th>Avg accuracy</th><th>Avg conciseness</th><th>Avg actionability</th><th>Sample count</th></tr></thead>
             <tbody>{"".join(rows)}</tbody>
         </table>
     </div>
-    """
+    <p class="muted">Sorted by overall score (mean of accuracy, conciseness and actionability), highest first.</p>"""
 
 
 def analyze_results(files: List[Path], baseline_name: str, judge_cache: Dict[str, Any] = None, judge_model: str = None) -> str:

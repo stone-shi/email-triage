@@ -8,6 +8,13 @@ test_configurations:
   - name: "qwen3.6-35b-a3b"
     triage_model: "localai/qwen3.6-35b-a3b"
     summary_model: "localai/qwen3.6-35b-a3b"
+    # Belt-and-braces alongside triage.py's invisible-character stripping, which removed the
+    # trigger this model actually choked on. On 5 of 100 emails its reasoning failed to converge
+    # and returned empty completions (a 502) on all 4 retry attempts -- deterministic, so the
+    # retry could not help. Raising max_tokens is not the answer: the 89 healthy calls needed a
+    # median of 1,236 completion tokens against a 3,072 cap, while one stalled email wanted 4,647
+    # and another never finished at all given 16,384. Reasoning off fixes 5/5 at ~100 tokens.
+    reasoning_effort: "none"
   - name: "qwythos-9b-claude-mythos"
     triage_model: "localai/qwythos-9b-claude-mythos"
     summary_model: "localai/qwythos-9b-claude-mythos"

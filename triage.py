@@ -4,7 +4,7 @@ import re
 import json
 import time
 from typing import Optional, Tuple, Dict, Any, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import httpx
 import tiktoken
 from config import settings
@@ -51,6 +51,130 @@ class _TransientLLMError(RuntimeError):
         self.response = response
 
 
+# Zero-width and bidi-control characters carry no lexical meaning but are routinely used as
+# filler in marketing mail -- most often long runs of U+200C to stretch a mail client's preview
+# text. Stripping them before an LLM (or the reranker) ever sees the text is pure win on three
+# counts: cost, since on this repo's 100-email benchmark set 20 messages carried them and on those
+# they were 79-85% of the whole Level 1 prompt (9,067 -> 5,924 prompt tokens across the set);
+# stability, since a run of them is what tipped localai/qwen3.6-35b-a3b into reasoning that never
+# converged, returning the empty completions a proxy reports as a 502; and quality, since nothing
+# visible to a human reader is removed, so the model judges what the recipient would actually see.
+_INVISIBLE_CHARS_RE = re.compile(
+    "["
+    "­"          # soft hyphen
+    "͏"          # combining grapheme joiner
+    "؜"          # arabic letter mark
+    "᠎"          # mongolian vowel separator
+    "​‌"    # zero-width space, zero-width non-joiner
+    "‎‏"    # left-to-right / right-to-left mark
+    "‪-‮"   # bidi embedding and override controls
+    "⁠-⁤"   # word joiner, invisible separator/times/plus
+    "⁦-⁩"   # bidi isolates
+    "﻿"          # zero-width no-break space (BOM)
+    "]"
+)
+
+# U+200D (zero-width joiner) needs a narrower rule than the set above: it is filler between plain
+# text -- all 308 occurrences in the benchmark set are single joiners wedged between ordinary
+# characters or other zero-width filler -- but it is load-bearing *between* pictographs, where it
+# builds a single glyph (👨‍👩‍👧). Drop it only when at least one neighbour is not a pictograph.
+_EMOJI_ADJACENT = "\U0001f000-\U0001faff☀-➿⬀-⯿️⃣"
+_FILLER_ZWJ_RE = re.compile(
+    f"(?<![{_EMOJI_ADJACENT}])‍|‍(?![{_EMOJI_ADJACENT}])"
+)
+
+
+def strip_invisible(text: str) -> str:
+    """Remove zero-width/bidi filler from text bound for an LLM or the reranker.
+
+    Callers apply this *before* truncating, so a `full_body[:8000]` slice spends its budget on
+    real content instead of padding. Visible text is left exactly as it was.
+    """
+    if not text:
+        return text
+    return _FILLER_ZWJ_RE.sub("", _INVISIBLE_CHARS_RE.sub("", text))
+
+
+# A fenced block anywhere in the response, capturing its info string (```json / ``` / ```JSON)
+# so a json-tagged fence can be preferred over an untagged one.
+_FENCED_BLOCK_RE = re.compile(r"```([a-zA-Z0-9_+-]*)[ \t]*\r?\n?(.*?)```", re.DOTALL)
+
+
+def _first_balanced_object(text: str) -> Optional[str]:
+    """The first balanced `{...}` span in text, or None. String-aware, so a brace inside a JSON
+    string value (or an escaped quote) doesn't throw the depth count off."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth, in_str, escaped = 0, False, False
+    for i, ch in enumerate(text[start:], start):
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
+def _repair_json(text: str) -> str:
+    """Fix the malformations models reliably produce inside an otherwise well-formed object."""
+    # Some smaller models (like Qwen 0.8B) return unquoted tags: "tag": promotion
+    # Look for "tag": followed by a single word that is NOT quoted and NOT a boolean/null.
+    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
+    # Invalid escapes like \' which some models return
+    return text.replace("\\'", "'")
+
+
+def extract_json(text: str) -> str:
+    """Pull the JSON object out of an LLM completion that was asked for JSON only.
+
+    Instruction-following is the exception, not the rule, so this is deliberately permissive:
+    a model may wrap its object in a fence, bury the fence *after* several paragraphs of prose,
+    or answer in prose with a bare object at the end. gemini-3.1-flash-lite does the second
+    consistently -- a "### Executive Summary" preamble, then a ```json fence -- which the old
+    `text.startswith("```")` test missed, so every Level 2 call it made failed to parse and the
+    email was dropped from the benchmark population entirely.
+
+    Candidates are tried in descending order of trustworthiness (json-tagged fence, untagged
+    fence, the whole response, the first balanced `{...}` span of each of those) and the first
+    one that actually parses after repair is returned. Ties within a tier go to document order,
+    matching the older "keep only the first balanced span" behavior. If nothing parses, the
+    best candidate is returned anyway so the caller's error log shows the most JSON-like text
+    rather than a wall of prose.
+    """
+    text = (text or "").strip()
+
+    fenced = _FENCED_BLOCK_RE.findall(text)
+    candidates = [body.strip() for tag, body in fenced if tag.lower() == "json"]
+    candidates += [body.strip() for tag, body in fenced if tag.lower() != "json"]
+    candidates.append(text)
+    # A candidate may still carry prose around its object (an unfenced answer, or a fence the
+    # model narrated inside), so scan each for a balanced span as a second-chance candidate.
+    for candidate in list(candidates):
+        span = _first_balanced_object(candidate)
+        if span and span != candidate:
+            candidates.append(span)
+
+    repaired = [_repair_json(c) for c in candidates if c]
+    for candidate in repaired:
+        try:
+            json.loads(candidate)
+            return candidate
+        except ValueError:
+            continue
+    return repaired[0] if repaired else text
+
+
 def _sigmoid(x: float) -> float:
     """Numerically-stable sigmoid, used to map a raw cross-encoder logit into (0,1)."""
     if x >= 0:
@@ -59,16 +183,43 @@ def _sigmoid(x: float) -> float:
     z = math.exp(x)
     return z / (1.0 + z)
 
+def _join_bullet_list(value: Any) -> Any:
+    """Accept a JSON array of bullets where the schema wants a single string.
+
+    A model asked for a "bulleted" summary quite reasonably answers with an array, and rejecting
+    it discarded an otherwise perfect result: the whole Level 2 stage failed and the caller stored
+    "Failed to generate proxy summary due to error: 1 validation error" in place of the summary.
+    Observed on localai/qwen3.6-35b-a3b (9 of 100 messages) once reasoning was disabled -- every
+    field correct except `summary` arriving as ["...", "...", "..."]. Same spirit as the unquoted
+    tag and bad-escape repairs in _extract_json: normalize what a model plausibly returns rather
+    than lose the call to it. Anything that is not a list passes through untouched.
+    """
+    if isinstance(value, (list, tuple)):
+        parts = [str(v).strip() for v in value if str(v) and str(v).strip()]
+        return "\n".join(p if p.startswith(("-", "*", "•")) else f"- {p}" for p in parts)
+    return value
+
+
 class TriageDecision(BaseModel):
     suggested_level: int = Field(description="Suggested triage level: 0 (noise), 1 (notification/promotion), 2 (important)")
     reason: str
     confidence_score: float = Field(default=1.0, description="Confidence score from 0.0 to 1.0")
     tag: str = Field(default="notification", description="One word classification tag (e.g., promotion, notification, personal, vip)")
 
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _accept_bullet_list(cls, v: Any) -> Any:
+        return _join_bullet_list(v)
+
 class SummaryResult(BaseModel):
     summary: str
     confidence_score: float = Field(default=1.0, description="Confidence score from 0.0 to 1.0")
     tag: str = Field(default="vip", description="One word classification tag (e.g., promotion, notification, personal, vip)")
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def _accept_bullet_list(cls, v: Any) -> Any:
+        return _join_bullet_list(v)
 
 class EmailTriageEngine:
     def __init__(self, db: EmailDB, settings_instance: Optional[Any] = None) -> None:
@@ -296,7 +447,7 @@ class EmailTriageEngine:
         if not getattr(self.settings.triage, "tei_noise_enabled", True):
             return None, None, 1.0
 
-        query_text = f"From: {sender} | Subject: {subject} | Snippet: {snippet}"
+        query_text = strip_invisible(f"From: {sender} | Subject: {subject} | Snippet: {snippet}")
         try:
             logger.info("Level 0.5 rerank noise-filter request sent to server: %s", self.settings.triage.tei_url)
             (noise_score,) = self._rerank(query_text, [RERANK_NOISE_ANCHOR])
@@ -312,25 +463,9 @@ class EmailTriageEngine:
             return None, None, 0.0
 
     def _extract_json(self, text: str) -> str:
-        """
-        Extracts JSON content from text, stripping markdown code blocks if present.
-        Also attempts to fix common LLM formatting errors like unquoted string values.
-        """
-        text = text.strip()
-        if text.startswith("```"):
-            # Match ```json ... ``` or just ``` ... ```
-            match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-            if match:
-                text = match.group(1).strip()
-        
-        # Robustness fix: some smaller models (like Qwen 0.8B) return unquoted tags: "tag": promotion
-        # We look for "tag": followed by a single word that is NOT quoted and NOT a boolean/null
-        text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
-        
-        # Robustness fix: handle invalid escapes like \' which some models return
-        text = text.replace("\\'", "'")
-        
-        return text
+        """Deprecated alias for the module-level `extract_json` (kept for existing callers,
+        e.g. quality_check.py, which reach for it through a judge engine instance)."""
+        return extract_json(text)
 
     def run_level_1_classification(self, sender: str, subject: str, snippet: str, model_name: Optional[str] = None) -> Tuple[int, str, float, str, Dict[str, Any]]:
         """
@@ -339,9 +474,10 @@ class EmailTriageEngine:
         """
         if not model_name:
             model_name = self.settings.triage_model
-            
+
+        sender, subject, snippet = (strip_invisible(sender), strip_invisible(subject), strip_invisible(snippet))
         prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}"
-        
+
         metrics = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -446,6 +582,8 @@ class EmailTriageEngine:
         if not full_body or len(full_body.strip()) < 10:
             return "No substantive content to summarize.", 0.0, "notification", metrics
 
+        # Cleaned before the slice so the 8000-char budget goes to real content, not padding
+        subject, full_body = strip_invisible(subject), strip_invisible(full_body)
         prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
         system_instruction = self.prompts.get("level_2_summarization", {}).get("system")
         if not system_instruction:
@@ -508,6 +646,9 @@ class EmailTriageEngine:
         Secondary Premium Triage Escalation layer: Uses the premium summary model and full text body 
         to re-evaluate borderline/ambiguous classification choices definitively.
         """
+        # Cleaned before the slice so the 6000-char budget goes to real content, not padding
+        sender, subject, snippet, full_body = (strip_invisible(sender), strip_invisible(subject),
+                                               strip_invisible(snippet), strip_invisible(full_body))
         prompt = f"Sender: {sender}\nSubject: {subject}\nSnippet: {snippet}\nFull Body Content:\n{full_body[:6000]}"
         system_instruction = self.prompts.get("level_1_premium_escalation", {}).get("system")
         if not system_instruction:

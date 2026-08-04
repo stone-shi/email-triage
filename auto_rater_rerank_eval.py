@@ -37,7 +37,7 @@ import httpx
 
 from config import settings
 from db import EmailDB
-from triage import EmailTriageEngine, RERANK_NOISE_ANCHOR
+from triage import EmailTriageEngine, RERANK_NOISE_ANCHOR, extract_json
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,18 +55,6 @@ DEFAULT_AUDIT_SYSTEM = (
     "You MUST return a valid JSON object containing exactly three fields: "
     "'is_actually_low_priority' (boolean), 'reason' (string), and 'confidence_score' (float from 0.0 to 1.0)."
 )
-
-
-def extract_json(text: str) -> str:
-    import re
-    text = text.strip()
-    if text.startswith("```"):
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
-    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
-    text = text.replace("\\'", "'")
-    return text
 
 
 def judge_is_noise(

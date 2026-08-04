@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx
 
 from config import settings
-from triage import EmailTriageEngine, RERANK_IMPORTANT_ANCHOR, RERANK_NOISE_ANCHOR
+from triage import EmailTriageEngine, RERANK_IMPORTANT_ANCHOR, RERANK_NOISE_ANCHOR, extract_json
 from db import EmailDB
 
 logging.basicConfig(
@@ -22,21 +22,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("offline_eval")
 
-def extract_json(text: str) -> str:
-    import re
-    text = text.strip()
-    if text.startswith("```"):
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
-    
-    # Robustness fix: handle unquoted tags from lazy models
-    text = re.sub(r'("tag":\s*)(?!(?:true|false|null)\b)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[,}])', r'\1"\2"', text)
-    
-    # Robustness fix: handle invalid escapes like \'
-    text = text.replace("\\'", "'")
-    
-    return text
 
 def get_filtered_emails(db: EmailDB, days: Optional[int], start_date: Optional[str], end_date: Optional[str]) -> List[Dict[str, Any]]:
     """Retrieve cached email records from SQLite filtered by timeframe."""

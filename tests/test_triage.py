@@ -9,7 +9,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from triage import EmailTriageEngine, TriageDecision, SummaryResult
+from triage import EmailTriageEngine, TriageDecision, SummaryResult, strip_invisible, extract_json
 from db import EmailDB
 
 
@@ -415,6 +415,243 @@ class TestChatCompletionsDisablesStreaming:
         with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
             engine.run_level_1_premium_escalation("s@t.com", "S", "snip", "body")
             assert mock_post.call_args[1]["json"]["stream"] is False
+
+
+class TestBulletListCoercion:
+    """
+    A model told to write a "bulleted" summary may answer with a JSON array. That used to fail
+    SummaryResult validation and lose the entire Level 2 call (observed on 9 of 100 messages with
+    localai/qwen3.6-35b-a3b), so an array of bullets is now joined into one string.
+    """
+
+    def test_summary_list_is_joined(self):
+        r = SummaryResult.model_validate({
+            "summary": ["Login from Redmond, WA.", "Change password if unrecognized."],
+            "confidence_score": 0.95, "tag": "security"})
+        assert r.summary == "- Login from Redmond, WA.\n- Change password if unrecognized."
+        assert r.tag == "security"
+
+    def test_existing_bullet_markers_are_not_doubled(self):
+        r = SummaryResult.model_validate({"summary": ["- already bulleted", "• dot bullet", "* star"]})
+        assert r.summary == "- already bulleted\n• dot bullet\n* star"
+
+    def test_plain_string_summary_unchanged(self):
+        assert SummaryResult.model_validate({"summary": "Just one line."}).summary == "Just one line."
+
+    def test_empty_entries_dropped(self):
+        assert SummaryResult.model_validate({"summary": ["kept", "", "  "]}).summary == "- kept"
+
+    def test_triage_reason_list_is_joined(self):
+        d = TriageDecision.model_validate({"suggested_level": 2, "reason": ["urgent", "from VIP"],
+                                           "confidence_score": 0.9, "tag": "personal"})
+        assert d.reason == "- urgent\n- from VIP"
+
+    def test_non_string_scalars_still_rejected(self):
+        with pytest.raises(Exception):
+            SummaryResult.model_validate({"summary": {"unexpected": "dict"}})
+
+    def test_level_2_end_to_end_with_bullet_array(self, engine):
+        """The whole stage used to fail; now it returns a usable summary."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": json.dumps(
+                {"summary": ["First point.", "Second point."], "confidence_score": 0.9, "tag": "personal"})}}],
+            "usage": {"total_tokens": 40}
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            summary, score, tag, _ = engine.run_level_2_summarization("Subject", "A body worth summarizing.")
+        assert summary == "- First point.\n- Second point."
+        assert tag == "personal"
+        assert "error" not in summary.lower()
+
+
+class TestStripInvisible:
+    """
+    Zero-width/bidi filler (long U+200C runs stretching a preview pane, bidi isolates) is removed
+    before any LLM or reranker call: it was up to 85% of a Level 1 prompt on affected messages,
+    and it tipped one local model into reasoning that never converged.
+    """
+
+    def test_strips_zero_width_non_joiner_run(self):
+        assert strip_invisible("Deal" + "‌" * 40 + "inside") == "Dealinside"
+
+    def test_strips_bidi_isolates_and_marks(self):
+        assert strip_invisible("and ⁦1⁩ more item") == "and 1 more item"
+        assert strip_invisible("a‎b‏c‪d‮e") == "abcde"
+
+    def test_strips_assorted_invisibles(self):
+        raw = "a­b͏c؜d᠎e​f⁠g﻿h"
+        assert strip_invisible(raw) == "abcdefgh"
+
+    def test_leaves_visible_text_untouched(self):
+        for s in ["Re: Lunch tomorrow?", "🥭 Fresh Tuesday: Best Deals!", "naïve café — 50% off",
+                  "line1\nline2\ttabbed", "中文 subject"]:
+            assert strip_invisible(s) == s
+
+    def test_strips_filler_zwj_between_plain_text(self):
+        assert strip_invisible("Un‌li‍mited") == "Unlimited"
+
+    def test_preserves_zwj_inside_emoji_sequence(self):
+        family = "\U0001f468‍\U0001f469‍\U0001f467"
+        assert strip_invisible(f"Family {family} photo") == f"Family {family} photo"
+
+    def test_handles_empty_and_none(self):
+        assert strip_invisible("") == ""
+        assert strip_invisible(None) is None
+
+    def test_level_1_prompt_is_sanitized_before_send(self, engine):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": '{"suggested_level": 0, "reason": "r", "confidence_score": 0.9, "tag": "low"}'}}],
+            "usage": {"total_tokens": 40}
+        }
+        padded = "Shipped" + "‌" * 60 + " today"
+        with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
+            engine.run_level_1_classification("a@b.com", padded, "snippet‌‌")
+        sent = mock_post.call_args[1]["json"]["messages"][1]["content"]
+        assert "‌" not in sent
+        assert "Shipped today" in sent
+
+    def test_level_2_body_sanitized_before_truncation(self, engine):
+        """Padding must not consume the 8000-char body budget."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": '{"summary": "s", "confidence_score": 0.9, "tag": "personal"}'}}],
+            "usage": {"total_tokens": 40}
+        }
+        body = "‌" * 5000 + "REAL CONTENT " * 500
+        with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
+            engine.run_level_2_summarization("Subject", body)
+        sent = mock_post.call_args[1]["json"]["messages"][1]["content"]
+        assert "‌" not in sent
+        assert sent.count("REAL CONTENT") > 400
+
+    def test_premium_escalation_sanitized(self, engine):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": '{"suggested_level": 2, "reason": "r", "confidence_score": 0.9, "tag": "personal"}'}}],
+            "usage": {"total_tokens": 40}
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
+            engine.run_level_1_premium_escalation("a@b.com", "S‌ubj", "sn‌ip", "bo‌dy")
+        sent = mock_post.call_args[1]["json"]["messages"][1]["content"]
+        assert "‌" not in sent
+        assert "Subj" in sent and "snip" in sent and "body" in sent
+
+
+class TestExtractJson:
+    """
+    Models asked for JSON only routinely wrap it in prose. gemini-3.1-flash-lite does it on every
+    Level 2 call -- a "### Executive Summary" preamble followed by a ```json fence -- which the
+    old `text.startswith("```")` test missed, so all 3 of its summaries in a 100-email benchmark
+    run failed to parse and those emails were dropped from the results cache entirely.
+    """
+
+    GEMINI_LEVEL_2_RESPONSE = """### Executive Summary
+*   **Input Analysis**: The provided text is a standard notification email from Google Voice.
+*   **Next Steps**: Please provide the codebase you would like me to assist with.
+
+```json
+{
+  "summary": "A Google Voice voicemail notification.",
+  "confidence_score": 1.0,
+  "tag": "update"
+}
+```"""
+
+    def test_fenced_block_after_prose_preamble(self):
+        parsed = json.loads(extract_json(self.GEMINI_LEVEL_2_RESPONSE))
+        assert parsed == {"summary": "A Google Voice voicemail notification.",
+                          "confidence_score": 1.0, "tag": "update"}
+
+    def test_level_2_end_to_end_with_prose_preamble(self, engine):
+        """The stage used to return "Failed to generate proxy summary due to error: ..."."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": self.GEMINI_LEVEL_2_RESPONSE}}],
+            "usage": {"total_tokens": 400},
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            summary, score, tag, _ = engine.run_level_2_summarization("New voicemail", "A body worth summarizing.")
+        assert summary == "A Google Voice voicemail notification."
+        assert (score, tag) == (1.0, "update")
+
+    def test_level_1_end_to_end_with_prose_preamble(self, engine):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": 'Let me think about this.\n```json\n'
+                                               '{"suggested_level": 0, "reason": "newsletter", '
+                                               '"confidence_score": 0.9, "tag": "low"}\n```'}}],
+            "usage": {"total_tokens": 40},
+        }
+        with patch.object(engine.http_client, "post", return_value=mock_response):
+            level, reason, score, tag, _ = engine.run_level_1_classification("a@b.com", "Subject", "snippet")
+        assert (level, reason, score, tag) == (0, "newsletter", 0.9, "low")
+
+    def test_bare_object_after_prose(self):
+        """Prose then an unfenced object -- no fence to find, so the balanced-span scan gets it."""
+        raw = 'Here is the result:\n\n{"summary": "s", "confidence_score": 0.5, "tag": "vip"}\n\nHope that helps!'
+        assert json.loads(extract_json(raw))["summary"] == "s"
+
+    def test_trailing_prose_after_fence(self):
+        raw = '```json\n{"summary": "s", "tag": "vip"}\n```\n\nLet me know if you want more detail.'
+        assert json.loads(extract_json(raw))["tag"] == "vip"
+
+    def test_untagged_fence_still_works(self):
+        assert json.loads(extract_json('Sure.\n```\n{"summary": "s"}\n```'))["summary"] == "s"
+
+    def test_json_fence_preferred_over_untagged_code_fence(self):
+        raw = ('First, some pseudo-code:\n```\n{not: json at all}\n```\n'
+               'And the answer:\n```json\n{"summary": "real"}\n```')
+        assert json.loads(extract_json(raw))["summary"] == "real"
+
+    def test_brace_in_prose_does_not_win_over_fence(self):
+        raw = 'Template used: {placeholder}\n```json\n{"summary": "real", "tag": "vip"}\n```'
+        assert json.loads(extract_json(raw))["summary"] == "real"
+
+    def test_braces_inside_string_values_survive(self):
+        raw = '```json\n{"summary": "Use the {token} placeholder \\"exactly\\"", "tag": "vip"}\n```'
+        assert json.loads(extract_json(raw))["summary"] == 'Use the {token} placeholder "exactly"'
+
+    def test_repeated_object_keeps_the_first(self):
+        raw = '{"summary": "first"}\n{"summary": "second"}'
+        assert json.loads(extract_json(raw))["summary"] == "first"
+
+    def test_plain_json_unchanged(self):
+        raw = '{"suggested_level": 2, "reason": "r", "confidence_score": 1.0, "tag": "personal"}'
+        assert extract_json(raw) == raw
+
+    def test_unquoted_tag_still_repaired(self):
+        assert json.loads(extract_json('{"suggested_level": 1, "tag": promotion}'))["tag"] == "promotion"
+
+    def test_unquoted_tag_repaired_inside_prose_wrapped_fence(self):
+        raw = 'Reasoning: it looks like an ad.\n```json\n{"suggested_level": 1, "tag": promotion}\n```'
+        assert json.loads(extract_json(raw))["tag"] == "promotion"
+
+    def test_invalid_escape_still_repaired(self):
+        assert json.loads(extract_json('{"reason": "it\\\'s a receipt", "tag": "notification"}'))["reason"] == "it's a receipt"
+
+    def test_unparseable_response_returns_most_json_like_text_for_the_log(self):
+        """Nothing parses, so the caller still raises -- but the error log should show the fence
+        contents rather than the whole prose blob."""
+        raw = "I cannot help with that.\n```json\n{\"summary\": \n```"
+        assert extract_json(raw) == '{"summary":'
+
+    def test_prose_only_response_is_returned_verbatim(self):
+        assert extract_json("I cannot help with that.") == "I cannot help with that."
+
+    def test_empty_and_none(self):
+        assert extract_json("") == ""
+        assert extract_json(None) == ""
+
+    def test_method_alias_delegates(self, engine):
+        assert engine._extract_json(self.GEMINI_LEVEL_2_RESPONSE) == extract_json(self.GEMINI_LEVEL_2_RESPONSE)
 
 
 class TestTransientUpstreamRetry:

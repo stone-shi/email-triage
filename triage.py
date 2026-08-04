@@ -73,7 +73,16 @@ class EmailTriageEngine:
             "Authorization": f"Bearer {self.settings.summary_api_key}"
         }
         self.http_client = httpx.Client(timeout=1800.0)
-        
+
+        # Extra key/values merged into every /chat/completions payload this engine sends. Empty
+        # by default -- nothing in the normal CLI/MCP path sets it, so production behavior is
+        # unchanged. It exists so a caller sweeping many models (auto_rater_runner) can pass
+        # model-specific knobs such as `reasoning_effort`, which some local reasoning models
+        # need in order to answer at all: without it they can spend the entire completion
+        # budget on thinking tokens and return empty content. Set after construction, like the
+        # `*_headers` dicts above.
+        self.extra_payload_params: Dict[str, Any] = {}
+
         # Load external prompts if present
         import yaml
         prompts_path = self.settings.workspace_dir / "prompts.yml"
@@ -293,6 +302,7 @@ class EmailTriageEngine:
             "include_reasoning": False,
             "stream": False,
             "max_tokens": MAX_TOKENS_LEVEL_1,
+            **self.extra_payload_params,
         }
 
         try:
@@ -377,6 +387,7 @@ class EmailTriageEngine:
             "include_reasoning": False,
             "stream": False,
             "max_tokens": MAX_TOKENS_LEVEL_2,
+            **self.extra_payload_params,
         }
 
         start_time = time.time()
@@ -446,6 +457,7 @@ class EmailTriageEngine:
             "include_reasoning": False,
             "stream": False,
             "max_tokens": MAX_TOKENS_PREMIUM_ESCALATION,
+            **self.extra_payload_params,
         }
 
         try:

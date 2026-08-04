@@ -12,6 +12,10 @@ test_configurations:
     triage_model: "localai/qwen_qwen3.5-0.8b"
     summary_model: "localai/qwen_qwen3.5-0.8b"
     tei_router_enabled: false
+    # Required for this model, not a tuning choice: left to think, it collapses into a
+    # repetition loop and spends the entire completion budget on reasoning tokens without
+    # ever emitting content, which the proxy reports as a 502 empty upstream response.
+    reasoning_effort: "none"
   - name: "gpt-5.6-sol"
     triage_model: "cx/gpt-5.6-sol"
     summary_model: "cx/gpt-5.6-sol"

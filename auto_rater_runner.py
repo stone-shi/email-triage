@@ -5,7 +5,7 @@ import yaml
 import sys
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import httpx
 import prompts_store
 from config import settings
@@ -126,6 +126,17 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
     engine.triage_headers.update(OMNIROUTE_NO_CACHE_HEADER)
     engine.summary_headers.update(OMNIROUTE_NO_CACHE_HEADER)
 
+    # Optional per-configuration `reasoning_effort`. Some local reasoning models never leave
+    # their thinking block and burn the whole completion budget without emitting any content
+    # (the proxy then reports it as a 502 empty upstream response), so they cannot be
+    # benchmarked at all unless thinking is switched off for them specifically. Scoped to the
+    # one configuration that declares it: it measurably changes classification decisions, so
+    # applying it globally would silently alter what every other config is measuring.
+    reasoning_effort = config.get("reasoning_effort")
+    if reasoning_effort:
+        engine.extra_payload_params["reasoning_effort"] = reasoning_effort
+        logger.info("Configuration '%s' pins reasoning_effort=%r on both models.", config_name, reasoning_effort)
+
     new_emails_duration = 0.0
     processed_any_new = False
 
@@ -233,6 +244,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                         "include_reasoning": False,
                         "stream": False,
                         "max_tokens": MAX_TOKENS_LEVEL_2,
+                        **engine.extra_payload_params,
                     }
                     resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
                     resp.raise_for_status()
@@ -421,7 +433,7 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
 
     return {"config_name": config_name, "llm_calls": llm_call_log}
 
-def test_llm_reachability(model_name: str, base_url: str, headers: Dict[str, str], http_client: httpx.Client) -> Tuple[bool, str]:
+def test_llm_reachability(model_name: str, base_url: str, headers: Dict[str, str], http_client: httpx.Client, reasoning_effort: Optional[str] = None) -> Tuple[bool, str]:
     payload = {
         "model": model_name,
         "messages": [
@@ -435,6 +447,11 @@ def test_llm_reachability(model_name: str, base_url: str, headers: Dict[str, str
         # streaming is explicitly declined, and resp.json() cannot parse an SSE body.
         "stream": False,
     }
+    # Probe the model the same way its configuration will actually drive it, otherwise a model
+    # that only answers with thinking disabled is reported as unreachable here while working
+    # fine in the real run.
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
     try:
         resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
         resp.raise_for_status()
@@ -521,7 +538,7 @@ def main() -> None:
             **OMNIROUTE_NO_CACHE_HEADER,
         }
         http_client = httpx.Client(timeout=120.0)
-        model_results: Dict[str, Tuple[bool, str]] = {}
+        model_results: Dict[Tuple[Optional[str], Optional[str]], Tuple[bool, str]] = {}
         all_passed = True
         logger.info("=" * 60)
         logger.info("LLM CONNECTIVITY TEST")
@@ -529,13 +546,18 @@ def main() -> None:
         for cfg in configs:
             cfg_name = cfg.get("name")
             logger.info("Configuration '%s':", cfg_name)
+            cfg_effort = cfg.get("reasoning_effort")
             for role in ("triage_model", "summary_model"):
                 model_name = cfg.get(role)
-                if model_name not in model_results:
-                    model_results[model_name] = test_llm_reachability(model_name, base_url, headers, http_client)
-                passed, detail = model_results[model_name]
+                # Key the memo on the effort too: the same model can fail without it and pass
+                # with it, so a shared entry would report whichever config was probed first.
+                cache_key = (model_name, cfg_effort)
+                if cache_key not in model_results:
+                    model_results[cache_key] = test_llm_reachability(model_name, base_url, headers, http_client, cfg_effort)
+                passed, detail = model_results[cache_key]
                 all_passed = all_passed and passed
-                logger.info("    [%s] %s (%s) - %s", "PASS" if passed else "FAIL", model_name, role, detail)
+                suffix = f" [reasoning_effort={cfg_effort}]" if cfg_effort else ""
+                logger.info("    [%s] %s (%s)%s - %s", "PASS" if passed else "FAIL", model_name, role, suffix, detail)
         logger.info("=" * 60)
         logger.info("LLM connectivity test %s", "PASSED" if all_passed else "FAILED")
         logger.info("=" * 60)

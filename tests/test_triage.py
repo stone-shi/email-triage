@@ -260,6 +260,9 @@ class TestRunLevel1Classification:
         assert "error" in reason.lower()
 
     def test_empty_llm_response_raises(self, engine):
+        # Empty content is retried now, so disable the retry to assert the terminal fallback
+        # without making the suite sit through the backoff. Retry itself is covered below.
+        engine.llm_retry_attempts = 1
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -412,6 +415,112 @@ class TestChatCompletionsDisablesStreaming:
         with patch.object(engine.http_client, "post", return_value=mock_response) as mock_post:
             engine.run_level_1_premium_escalation("s@t.com", "S", "snip", "body")
             assert mock_post.call_args[1]["json"]["stream"] is False
+
+
+class TestTransientUpstreamRetry:
+    """
+    Regression coverage: a transient upstream failure used to be absorbed as a *decision* --
+    one 502 (or a self-hosted backend restarting and answering instant `rpc error: code =
+    Unavailable` 500s) silently defaulted a message to Level 2 and dropped it from any benchmark
+    population. These calls are retried with backoff now; a 4xx still is not, and once the
+    attempts are spent each stage falls back exactly as it did before.
+    """
+
+    @pytest.fixture
+    def no_sleep_engine(self, engine):
+        engine.llm_retry_backoff_seconds = (0.0,)
+        return engine
+
+    @staticmethod
+    def _ok_response(content):
+        r = MagicMock()
+        r.status_code = 200
+        r.json.return_value = {"choices": [{"message": {"content": content}}], "usage": {"total_tokens": 40}}
+        return r
+
+    @staticmethod
+    def _error_response(status):
+        r = MagicMock()
+        r.status_code = status
+        r.text = "rpc error: code = Unavailable"
+        return r
+
+    LEVEL_1_OK = '{"suggested_level": 1, "reason": "r", "confidence_score": 0.9, "tag": "notification"}'
+
+    def test_retries_5xx_then_succeeds(self, no_sleep_engine):
+        responses = [self._error_response(502), self._error_response(500), self._ok_response(self.LEVEL_1_OK)]
+        with patch.object(no_sleep_engine.http_client, "post", side_effect=responses) as mock_post:
+            level, reason, score, tag, metrics = no_sleep_engine.run_level_1_classification("s@t.com", "S", "b")
+        assert mock_post.call_count == 3
+        assert level == 1
+        assert "error" not in reason.lower()
+
+    def test_retries_empty_content_then_succeeds(self, no_sleep_engine):
+        responses = [self._ok_response(""), self._ok_response(self.LEVEL_1_OK)]
+        with patch.object(no_sleep_engine.http_client, "post", side_effect=responses) as mock_post:
+            level, _, _, _, _ = no_sleep_engine.run_level_1_classification("s@t.com", "S", "b")
+        assert mock_post.call_count == 2
+        assert level == 1
+
+    def test_retries_dropped_connection_then_succeeds(self, no_sleep_engine):
+        responses = [httpx.ConnectError("connection refused"), self._ok_response(self.LEVEL_1_OK)]
+        with patch.object(no_sleep_engine.http_client, "post", side_effect=responses) as mock_post:
+            level, _, _, _, _ = no_sleep_engine.run_level_1_classification("s@t.com", "S", "b")
+        assert mock_post.call_count == 2
+        assert level == 1
+
+    def test_gives_up_after_configured_attempts_and_falls_back(self, no_sleep_engine):
+        no_sleep_engine.llm_retry_attempts = 3
+        with patch.object(no_sleep_engine.http_client, "post",
+                          return_value=self._error_response(500)) as mock_post:
+            level, reason, _, _, _ = no_sleep_engine.run_level_1_classification("s@t.com", "S", "b")
+        assert mock_post.call_count == 3
+        assert level == 2
+        assert "error" in reason.lower()
+
+    def test_4xx_is_not_retried(self, no_sleep_engine):
+        bad = MagicMock()
+        bad.status_code = 401
+        bad.text = "unauthorized"
+        bad.raise_for_status.side_effect = httpx.HTTPStatusError("401", request=MagicMock(), response=bad)
+        with patch.object(no_sleep_engine.http_client, "post", return_value=bad) as mock_post:
+            level, reason, _, _, _ = no_sleep_engine.run_level_1_classification("s@t.com", "S", "b")
+        assert mock_post.call_count == 1
+        assert level == 2
+
+    def test_non_json_body_is_not_retried(self, no_sleep_engine):
+        """An SSE/HTML 200 is a misconfiguration, not a blip -- retrying just burns tokens."""
+        streamed = MagicMock()
+        streamed.status_code = 200
+        streamed.headers = {"content-type": "text/event-stream"}
+        streamed.text = "data: {...}"
+        streamed.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        with patch.object(no_sleep_engine.http_client, "post", return_value=streamed) as mock_post:
+            level, _, _, _, _ = no_sleep_engine.run_level_1_classification("s@t.com", "S", "b")
+        assert mock_post.call_count == 1
+        assert level == 2
+
+    def test_level_2_summarization_retries(self, no_sleep_engine):
+        summary = '{"summary": "s", "confidence_score": 0.9, "tag": "personal"}'
+        responses = [self._error_response(502), self._ok_response(summary)]
+        with patch.object(no_sleep_engine.http_client, "post", side_effect=responses) as mock_post:
+            result, _, tag, _ = no_sleep_engine.run_level_2_summarization("Subject", "Body to summarize.")
+        assert mock_post.call_count == 2
+        assert result == "s"
+
+    def test_premium_escalation_retries(self, no_sleep_engine):
+        content = '{"suggested_level": 1, "reason": "r", "confidence_score": 0.85, "tag": "notification"}'
+        responses = [self._error_response(503), self._ok_response(content)]
+        with patch.object(no_sleep_engine.http_client, "post", side_effect=responses) as mock_post:
+            level, _, _, _ = no_sleep_engine.run_level_1_premium_escalation("s@t.com", "S", "snip", "body")
+        assert mock_post.call_count == 2
+        assert level == 1
+
+    def test_token_usage_logged_once_despite_retries(self, no_sleep_engine):
+        responses = [self._error_response(500), self._ok_response(self.LEVEL_1_OK)]
+        with patch.object(no_sleep_engine.http_client, "post", side_effect=responses):
+            no_sleep_engine.run_level_1_classification("s@t.com", "S", "b")
+        assert no_sleep_engine.db.log_token_usage.call_count == 1
 
 
 class TestRerankRouter:

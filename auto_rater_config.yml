@@ -8,6 +8,19 @@ test_configurations:
   - name: "qwen3.6-35b-a3b"
     triage_model: "localai/qwen3.6-35b-a3b"
     summary_model: "localai/qwen3.6-35b-a3b"
+  - name: "qwythos-9b-claude-mythos"
+    triage_model: "localai/qwythos-9b-claude-mythos"
+    summary_model: "localai/qwythos-9b-claude-mythos"
+    # Required for this model, not a tuning choice -- same pathology as qwen3.5-0.8b below, but
+    # intermittent rather than every call: on a few percent of requests it never converges, burns
+    # the entire completion budget on reasoning tokens, and emits no content, which the proxy
+    # reports as a 502 upstream_empty_response. Measured over all 100 offline emails at Level 1:
+    # 3/100 stalled this way with reasoning on, 0/100 with it off. Raising max_tokens is the wrong
+    # lever -- the stall runs until the budget is gone, so a 5x bigger cap just turns an 18s
+    # failure into a 90s one. Disabling reasoning also cuts median Level 1 spend from ~600 to
+    # ~90 completion tokens.
+    reasoning_effort: "none"
+    tei_router_enabled: false
   - name: "qwen3.5-0.8b"
     triage_model: "localai/qwen_qwen3.5-0.8b"
     summary_model: "localai/qwen_qwen3.5-0.8b"

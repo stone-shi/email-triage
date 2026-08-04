@@ -29,6 +29,27 @@ MAX_TOKENS_LEVEL_1 = 3072
 MAX_TOKENS_PREMIUM_ESCALATION = 3072
 MAX_TOKENS_LEVEL_2 = 4096
 
+# Transient-failure retry policy for every /chat/completions call below. Three upstream failures
+# are worth retrying because the identical request usually succeeds moments later: a retryable
+# 5xx (a self-hosted model backend that has died answers instantly with `rpc error: code =
+# Unavailable` 500s until it is restarted, and a proxy reports a stalled generation as a 502), a
+# dropped connection, and a 200 whose completion carries no content. Without a retry a single
+# blip is silently absorbed as a *decision*: run_level_1_classification defaults the message to
+# Level 2, and auto_rater_runner drops it from the benchmark population altogether. Outages
+# measured on this deployment last ~10-20s, so the backoff is sized to outlast one rather than
+# to be polite. Retries are bounded and never applied to a 4xx, which would just fail again.
+LLM_RETRY_ATTEMPTS = 4
+LLM_RETRY_BACKOFF_SECONDS = (1.0, 3.0, 8.0, 20.0)
+_RETRYABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
+
+
+class _TransientLLMError(RuntimeError):
+    """An upstream failure worth retrying: a retryable 5xx, or a completion with no content."""
+
+    def __init__(self, message: str, response: Optional[httpx.Response] = None) -> None:
+        super().__init__(message)
+        self.response = response
+
 
 def _sigmoid(x: float) -> float:
     """Numerically-stable sigmoid, used to map a raw cross-encoder logit into (0,1)."""
@@ -73,6 +94,12 @@ class EmailTriageEngine:
             "Authorization": f"Bearer {self.settings.summary_api_key}"
         }
         self.http_client = httpx.Client(timeout=1800.0)
+
+        # Per-instance overrides for the module-level retry policy, so a caller that wants a
+        # different tolerance (or a test that wants no sleeping) can set them without patching
+        # module state. See _post_chat_completion.
+        self.llm_retry_attempts = LLM_RETRY_ATTEMPTS
+        self.llm_retry_backoff_seconds = LLM_RETRY_BACKOFF_SECONDS
 
         # Extra key/values merged into every /chat/completions payload this engine sends. Empty
         # by default -- nothing in the normal CLI/MCP path sets it, so production behavior is
@@ -168,6 +195,63 @@ class EmailTriageEngine:
             if vip.lower() in sender.lower():
                 return True
         return False
+
+    def _post_chat_completion(
+        self, url: str, headers: Dict[str, str], payload: Dict[str, Any], stage: str,
+    ) -> Tuple[httpx.Response, Dict[str, Any]]:
+        """POST one /chat/completions request, retrying transient upstream failures.
+
+        Returns (response, parsed_json), guaranteeing a non-empty `choices[0].message.content`.
+        Once the attempts are exhausted it raises the last failure, which each caller's own
+        `except` already turns into that stage's documented safe fallback -- so a total outage
+        behaves exactly as it did before this retry existed, just later. Token spend on a failed
+        attempt is deliberately not logged (an empty completion is the thing being retried past),
+        so `token_logs` still gets one row per successful stage call.
+        """
+        attempts = max(1, int(self.llm_retry_attempts))
+        backoff = self.llm_retry_backoff_seconds or (0.0,)
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                response = self.http_client.post(url, headers=headers, json=payload)
+                if response.status_code in _RETRYABLE_STATUS_CODES:
+                    raise _TransientLLMError(
+                        f"HTTP {response.status_code} from upstream: {response.text[:300]}", response
+                    )
+                response.raise_for_status()
+
+                try:
+                    resp_json = response.json()
+                except json.JSONDecodeError:
+                    # Not retried: a non-JSON 200 means a misconfigured request rather than a
+                    # blip -- most often the proxy streaming Server-Sent Events because
+                    # `stream: false` didn't reach it, which would fail identically forever.
+                    logger.error(
+                        "%s proxy response is not valid JSON. Status: %s, Content-Type: %s, Body: %s",
+                        stage, response.status_code, response.headers.get("content-type"), response.text[:2000],
+                    )
+                    raise
+
+                content = ((resp_json.get("choices") or [{}])[0].get("message") or {}).get("content")
+                if not (content or "").strip():
+                    raise _TransientLLMError(
+                        f"upstream returned a completion with no content: {resp_json}", response
+                    )
+                return response, resp_json
+
+            except (_TransientLLMError, httpx.TransportError) as err:
+                last_error = err
+                if attempt >= attempts:
+                    break
+                delay = backoff[min(attempt - 1, len(backoff) - 1)]
+                logger.warning(
+                    "%s attempt %d/%d failed (%s); retrying in %.1fs", stage, attempt, attempts, err, delay
+                )
+                time.sleep(delay)
+
+        logger.error("%s exhausted %d attempt(s) against transient upstream failures.", stage, attempts)
+        raise last_error
 
     def run_level_0_static(self, sender: str, subject: str) -> Tuple[bool, Optional[str]]:
         """
@@ -307,15 +391,10 @@ class EmailTriageEngine:
 
         try:
             logger.info("Level 1 Triage request sent to custom LiteLLM proxy model: %s", model_name)
-            response = self.http_client.post(url, headers=self.triage_headers, json=payload)
-            response.raise_for_status()
-            
-            try:
-                resp_json = response.json()
-            except json.JSONDecodeError as e:
-                logger.error("Level 1 Proxy response is not valid JSON. Status: %s, Body: %s", response.status_code, response.text)
-                raise e
-            
+            response, resp_json = self._post_chat_completion(
+                url, self.triage_headers, payload, "Level 1 classification"
+            )
+
             # Extract usage data from response if provided by proxy
             usage = resp_json.get("usage", {})
             metrics["prompt_tokens"] = usage.get("prompt_tokens", 0)
@@ -324,12 +403,8 @@ class EmailTriageEngine:
             tokens_used = usage.get("total_tokens", self._estimate_tokens(prompt) + 40)
             self.db.log_token_usage("level_1_classification", model_name, tokens_used)
             
-            # Parse inner completion content
+            # Parse inner completion content (guaranteed non-empty by _post_chat_completion)
             content = resp_json["choices"][0]["message"]["content"]
-            if not content:
-                logger.error("Level 1 LLM returned empty content. Response: %s", resp_json)
-                raise ValueError("Empty content from LLM")
-
             json_content = self._extract_json(content)
             try:
                 result_dict = json.loads(json_content)
@@ -393,15 +468,10 @@ class EmailTriageEngine:
         start_time = time.time()
         try:
             logger.info("Level 2 Triage summary request sent to custom LiteLLM proxy model: %s", model_name)
-            response = self.http_client.post(url, headers=self.summary_headers, json=payload)
-            response.raise_for_status()
-            
-            try:
-                resp_json = response.json()
-            except json.JSONDecodeError as e:
-                logger.error("Level 2 Proxy response is not valid JSON. Status: %s, Body: %s", response.status_code, response.text)
-                raise e
-            
+            response, resp_json = self._post_chat_completion(
+                url, self.summary_headers, payload, "Level 2 summarization"
+            )
+
             usage = resp_json.get("usage", {})
             metrics["prompt_tokens"] = usage.get("prompt_tokens", 0)
             metrics["completion_tokens"] = usage.get("completion_tokens", 0)
@@ -409,11 +479,8 @@ class EmailTriageEngine:
             tokens_used = usage.get("total_tokens", self._estimate_tokens(prompt) + 180)
             self.db.log_token_usage("level_2_summary", model_name, tokens_used)
             
+            # Guaranteed non-empty by _post_chat_completion
             content = resp_json["choices"][0]["message"]["content"].strip()
-            if not content:
-                logger.error("Level 2 LLM returned empty content. Response: %s", resp_json)
-                raise ValueError("Empty content from LLM")
-
             json_content = self._extract_json(content)
             try:
                 result_dict = json.loads(json_content)
@@ -462,10 +529,10 @@ class EmailTriageEngine:
 
         try:
             logger.info("Ambiguity Triage Escalation sent to premium model: %s", self.settings.summary_model)
-            response = self.http_client.post(url, headers=self.summary_headers, json=payload)
-            response.raise_for_status()
-            
-            resp_json = response.json()
+            response, resp_json = self._post_chat_completion(
+                url, self.summary_headers, payload, "Premium triage escalation"
+            )
+
             usage = resp_json.get("usage", {})
             tokens_used = usage.get("total_tokens", self._estimate_tokens(prompt) + 40)
             self.db.log_token_usage("premium_triage_escalation", self.settings.summary_model, tokens_used)

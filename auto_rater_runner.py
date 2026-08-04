@@ -7,8 +7,9 @@ import time
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 import httpx
+import prompts_store
 from config import settings
-from triage import EmailTriageEngine
+from triage import EmailTriageEngine, MAX_TOKENS_LEVEL_2
 from db import EmailDB
 
 logging.basicConfig(
@@ -19,7 +20,18 @@ logging.basicConfig(
 logger = logging.getLogger("auto_rater_runner")
 
 # Omniroute caches identical requests; benchmarking needs a fresh completion every time.
-OMNIROUTE_NO_CACHE_HEADER = {"X-Omniroute-Skip-Cache": "true"}
+# The header name is load-bearing and silently ignored if wrong: an unrecognized one still gets
+# a 200 back, just served from cache (x-omniroute-cache: HIT, ~0.01s), which quietly turns the
+# per-stage duration_sec metrics into cache-lookup times instead of real generation latency.
+# Verified against this deployment: X-Omniroute-No-Cache is honored, X-Omniroute-Skip-Cache is not.
+OMNIROUTE_NO_CACHE_HEADER = {"X-Omniroute-No-Cache": "true"}
+
+# Ceiling on completion tokens for this module's own (non-EmailTriageEngine) LLM calls -- the
+# Level 0 judge audit and the --test reachability probe. Sized like triage.py's constants: big
+# enough that a reasoning model still reaches its JSON answer after spending most of the budget
+# on hidden thinking tokens, since a mid-thought truncation returns empty content instead.
+MAX_TOKENS_LEVEL_0_JUDGE = 3072
+MAX_TOKENS_REACHABILITY_PROBE = 4096
 
 def extract_json(text: str) -> str:
     import re
@@ -116,11 +128,36 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
 
     new_emails_duration = 0.0
     processed_any_new = False
-    
+
     l0_processed = 0
     l1_processed = 0
     l2_processed = 0
-    
+
+    def write_output(partial: bool) -> None:
+        """Persist results so far. Called periodically, not just at the end: a slow local model
+        can take minutes per email, and a run that only wrote on completion left no artifact at
+        all if it was interrupted -- and no way to see how far it had gotten. Written via a temp
+        file + atomic replace so an interrupt mid-write can't leave truncated JSON behind, which
+        would poison the incremental-cache reload on the next run."""
+        payload = {
+            "configuration_name": config_name,
+            "triage_model": triage_model,
+            "summary_model": summary_model,
+            "total_processing_all_emails_duration_sec": (
+                existing_total_duration + new_emails_duration if processed_any_new else existing_total_duration
+            ),
+            "total_emails_processed": len(emails),
+            "results": run_results,
+        }
+        if partial:
+            payload["partial"] = True
+        output_file.parent.mkdir(exist_ok=True)
+        tmp_file = output_file.with_suffix(".json.tmp")
+        with open(tmp_file, "w", encoding="utf-8") as tmp_f:
+            json.dump(payload, tmp_f, indent=2, ensure_ascii=False)
+        tmp_file.replace(output_file)
+
+
     for idx, email in enumerate(emails, 1):
         if max_items is not None and l0_processed >= max_items and l1_processed >= max_items and l2_processed >= max_items:
             logger.info("Max items reached for all levels. Stopping processing.")
@@ -180,7 +217,10 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                 metrics["summary"] = "No substantive content to summarize."
             else:
                 l2_prompt = f"Subject: {subject}\nBody:\n{full_body[:8000]}"
-                l2_system = prompts.get("level_2_summarization", {}).get("system", "")
+                # Fall back to the hardcoded default like triage.py's run_level_* methods do --
+                # never send an empty system prompt, which is what happened silently whenever
+                # prompts.yml was absent or unparseable and left `prompts` an empty dict.
+                l2_system = prompts.get("level_2_summarization", {}).get("system") or prompts_store.DEFAULT_PROMPTS["level_2_summarization"]
                 l2_start = time.time()
                 try:
                     l2_payload = {
@@ -190,7 +230,9 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                             {"role": "user", "content": l2_prompt}
                         ],
                         "temperature": 0.2,
-                        "include_reasoning": False
+                        "include_reasoning": False,
+                        "stream": False,
+                        "max_tokens": MAX_TOKENS_LEVEL_2,
                     }
                     resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l2_payload)
                     resp.raise_for_status()
@@ -247,7 +289,9 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
                         {"role": "user", "content": l0_audit_prompt}
                     ],
                     "temperature": 0.0,
-                    "include_reasoning": False
+                    "include_reasoning": False,
+                    "stream": False,
+                    "max_tokens": MAX_TOKENS_LEVEL_0_JUDGE,
                 }
                 resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=l0_payload)
                 resp.raise_for_status()
@@ -343,26 +387,25 @@ def run_config(config: Dict[str, Any], emails: List[Dict[str, Any]], workspace_d
         new_emails_duration += metrics["total_email_process_duration_sec"]
         processed_any_new = True
         run_results.append(metrics)
-        
-    if processed_any_new:
-        total_duration = existing_total_duration + new_emails_duration
-    else:
-        total_duration = existing_total_duration
-    
-    # Package wrapper container with complete benchmark group telemetry metadata
-    output_payload = {
-        "configuration_name": config_name,
-        "triage_model": triage_model,
-        "summary_model": summary_model,
-        "total_processing_all_emails_duration_sec": total_duration,
-        "total_emails_processed": len(emails),
-        "results": run_results
-    }
-    
-    output_file.parent.mkdir(exist_ok=True)
-    with open(output_file, "w", encoding="utf-8") as out_f:
-        json.dump(output_payload, out_f, indent=2, ensure_ascii=False)
-        
+
+        # Progress + running average, so a config grinding on a slow local model is visibly
+        # making progress rather than looking hung for hours with no output at all.
+        newly_done = l0_processed + l1_processed + l2_processed
+        avg = new_emails_duration / max(newly_done, 1)
+        logger.info(
+            "[%s] %d/%d done (level %s, %.1fs; avg %.1fs/email, ~%.0f min left for %d remaining)",
+            config_name, idx, len(emails), metrics["triage_level"],
+            metrics["total_email_process_duration_sec"], avg,
+            avg * (len(emails) - idx) / 60.0, len(emails) - idx,
+        )
+        if newly_done % 5 == 0:
+            write_output(partial=True)
+
+
+    # Final write: same payload as the periodic ones, minus the "partial" marker.
+    write_output(partial=False)
+
+
     # Restore old reranker settings to preserve clean state across profile loop iterations
     settings.triage.triage_type = old_triage_type
     settings.triage.tei_url = old_tei_url
@@ -385,15 +428,30 @@ def test_llm_reachability(model_name: str, base_url: str, headers: Dict[str, str
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "Write a detailed paragraph (at least 100 words) explaining what an email triage pipeline does."}
         ],
-        "max_tokens": 200,
+        "max_tokens": MAX_TOKENS_REACHABILITY_PROBE,
         "temperature": 0.2,
-        "include_reasoning": False
+        "include_reasoning": False,
+        # Must match what the real pipeline sends: the proxy streams Server-Sent Events unless
+        # streaming is explicitly declined, and resp.json() cannot parse an SSE body.
+        "stream": False,
     }
     try:
         resp = http_client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
         resp.raise_for_status()
-        usage = resp.json().get("usage", {})
+        if "text/event-stream" in resp.headers.get("content-type", ""):
+            return False, "proxy returned a streaming (SSE) response despite stream=false -- the pipeline cannot parse it"
+        try:
+            resp_json = resp.json()
+        except json.JSONDecodeError:
+            return False, f"reachable but response body is not JSON (content-type {resp.headers.get('content-type')!r})"
+        usage = resp_json.get("usage", {})
         completion_tokens = usage.get("completion_tokens", 0)
+        choices = resp_json.get("choices") or []
+        content = ((choices[0].get("message") or {}).get("content") or "") if choices else ""
+        # A reasoning model can burn the whole budget on hidden thinking tokens and still return
+        # empty content, so completion_tokens alone does not prove the model produced an answer.
+        if not content.strip():
+            return False, f"reachable but returned empty content ({completion_tokens} completion tokens, likely all reasoning -- raise max_tokens)"
         if completion_tokens <= 64:
             return False, f"reachable but only returned {completion_tokens} completion tokens (need > 64)"
         return True, f"reachable, {completion_tokens} completion tokens returned"

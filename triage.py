@@ -17,6 +17,18 @@ logger = logging.getLogger("email_triage.pipeline")
 RERANK_IMPORTANT_ANCHOR = "An urgent personal message from a specific person requiring your direct reply, decision, or action, such as a work request, deadline, bill, or critical account issue."
 RERANK_NOISE_ANCHOR = "An automated system notification, media download alert, promotional marketing email, newsletter, or subscription update that does not require any reply or action from you."
 
+# Upper bound on completion tokens per LLM stage. These are runaway guardrails, not tight
+# budgets: reasoning models spend most of their completion budget on hidden thinking tokens
+# before emitting the small JSON payload we actually parse, and not every backend honors
+# `include_reasoning: false` (some local ones stream `reasoning` deltas regardless). Without
+# a ceiling, such a model can spend thousands of tokens -- minutes of wall clock -- deciding
+# a single Level 1 classification. Keep these generous enough that a thinking model still
+# reaches its JSON answer, since a completion truncated mid-thought comes back with empty
+# content and fails the parse (some proxies turn that into a 502) rather than degrading.
+MAX_TOKENS_LEVEL_1 = 3072
+MAX_TOKENS_PREMIUM_ESCALATION = 3072
+MAX_TOKENS_LEVEL_2 = 4096
+
 
 def _sigmoid(x: float) -> float:
     """Numerically-stable sigmoid, used to map a raw cross-encoder logit into (0,1)."""
@@ -280,6 +292,7 @@ class EmailTriageEngine:
             "temperature": 0.0,
             "include_reasoning": False,
             "stream": False,
+            "max_tokens": MAX_TOKENS_LEVEL_1,
         }
 
         try:
@@ -363,6 +376,7 @@ class EmailTriageEngine:
             "temperature": 0.2,
             "include_reasoning": False,
             "stream": False,
+            "max_tokens": MAX_TOKENS_LEVEL_2,
         }
 
         start_time = time.time()
@@ -431,6 +445,7 @@ class EmailTriageEngine:
             "temperature": 0.0,
             "include_reasoning": False,
             "stream": False,
+            "max_tokens": MAX_TOKENS_PREMIUM_ESCALATION,
         }
 
         try:

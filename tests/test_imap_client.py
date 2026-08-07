@@ -198,3 +198,29 @@ class TestFetchAllHeaders:
         result = client.fetch_all_headers()
 
         assert result == []
+
+
+class TestFetchFullEmail:
+    def test_resolves_by_message_id_and_fetches_body(self):
+        client = make_client()
+        client._find_message = MagicMock(return_value={
+            "uid": "42",
+            "message_id": "<rfc123@example.com>",
+            "from": "sender@example.com",
+            "subject": "Hello",
+        })
+        client.fetch_full_body = MagicMock(return_value="full body text")
+
+        result = client.fetch_full_email("<rfc123@example.com>")
+
+        client._find_message.assert_called_once_with("<rfc123@example.com>")
+        client.fetch_full_body.assert_called_once_with("42")
+        assert result == {
+            "id": "42",
+            "message_id": "<rfc123@example.com>",
+            "sender": "sender@example.com",
+            "subject": "Hello",
+            "date": "",
+            "body": "full body text",
+            "account": "user@test.com",
+        }

@@ -120,7 +120,7 @@ The engine includes a complete Model Context Protocol (MCP) server implementatio
 |---|---|---|
 | `fetch_and_process_unread` | `max_per_source` (int), `days` (int) | Triggers unread email ingestion from Gmail and IMAP, executes multi-tier triage, and caches results. |
 | `list_cached_emails` | `limit` (int), `triage_level` (int) | Retrieves metadata for recently processed email records from SQLite. |
-| `get_email_details` | `message_id` (str) | Fetches the full detailed record of a cached email, including pipeline reason, confidence score, and premium summaries. |
+| `fetch_full_email` | `message_id` (str), `account_type` (str, optional) | Fetches the full headers and body of a single email by Message-ID/Gmail ID/IMAP UID -- served from cache at 0 cost if already downloaded, else fetched live and cached. |
 | `triage_single_email` | `message_id` (str) | Forces a full re-evaluation/triage of a specific cached email. |
 | `search_emails` | `query` (str) | Performs text search across sender, subject, and email body fields in SQLite. |
 

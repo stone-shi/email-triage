@@ -414,3 +414,33 @@ class TestFetchFullBodyRetry:
 
         assert body == ""
         assert execute_mock.call_count == 1
+
+
+class TestFetchFullEmail:
+    def test_resolves_by_internal_id_and_fetches_body(self):
+        service = MagicMock()
+        client = make_client(service)
+        client._find_message = MagicMock(return_value={
+            "id": "gmail-internal-id",
+            "payload": {"headers": [
+                {"name": "Message-ID", "value": "<rfc123@example.com>"},
+                {"name": "From", "value": "sender@example.com"},
+                {"name": "Subject", "value": "Hello"},
+                {"name": "Date", "value": "Mon, 1 Jan 2024 00:00:00 +0000"},
+            ]},
+        })
+        client.fetch_full_body = MagicMock(return_value="full body text")
+
+        result = client.fetch_full_email("<rfc123@example.com>")
+
+        client._find_message.assert_called_once_with("<rfc123@example.com>")
+        client.fetch_full_body.assert_called_once_with("gmail-internal-id")
+        assert result == {
+            "id": "gmail-internal-id",
+            "message_id": "<rfc123@example.com>",
+            "sender": "sender@example.com",
+            "subject": "Hello",
+            "date": "Mon, 1 Jan 2024 00:00:00 +0000",
+            "body": "full body text",
+            "account": "me@example.com",
+        }

@@ -887,6 +887,87 @@ class TestTriggerDownloadAndLastDownloadTime:
         assert set(result["profiles"].keys()) == {"default", "other"}
 
 
+class TestFetchFullEmail:
+    def test_returns_cached_body_without_live_fetch(self, monkeypatch):
+        db = MagicMock(spec=EmailDB)
+        db.get_cached_result.return_value = {
+            "sender": "s@x.com",
+            "subject": "Subj",
+            "date_str": "2026-01-01",
+            "email_body": "cached body",
+            "account": "gmail@test.com",
+            "triage_level": 2,
+            "tag": "important",
+            "level_2_summary": "summary text",
+        }
+        settings = MagicMock()
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
+        monkeypatch.setattr(mcp_server, "GmailClient", MagicMock(side_effect=AssertionError("should not be called")))
+        monkeypatch.setattr(mcp_server, "IMAPClient", MagicMock(side_effect=AssertionError("should not be called")))
+
+        result = mcp_server.fetch_full_email("<rfc123@example.com>", profile="default")
+
+        assert result["body"] == "cached body"
+        assert result["source"] == "cache"
+        db.upsert_email_metadata.assert_not_called()
+
+    def test_live_fetches_and_caches_when_body_missing(self, monkeypatch):
+        db = MagicMock(spec=EmailDB)
+        db.get_cached_result.return_value = None
+        settings = MagicMock()
+        settings.imap_login = "imap@test.com"
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
+        gmail = MagicMock(spec=GmailClient)
+        gmail.fetch_full_email.return_value = {
+            "id": "gmail-id",
+            "message_id": "<rfc123@example.com>",
+            "sender": "s@x.com",
+            "subject": "Subj",
+            "date": "2026-01-01",
+            "body": "live body",
+            "account": "gmail@test.com",
+        }
+        monkeypatch.setattr(mcp_server, "GmailClient", lambda settings_instance: gmail)
+        monkeypatch.setattr(mcp_server, "IMAPClient", MagicMock(side_effect=AssertionError("should not be called")))
+
+        result = mcp_server.fetch_full_email("<rfc123@example.com>", profile="default")
+
+        assert result["body"] == "live body"
+        assert result["source"] == "live"
+        db.upsert_email_metadata.assert_called_once_with(
+            message_id="<rfc123@example.com>",
+            account="gmail@test.com",
+            sender="s@x.com",
+            subject="Subj",
+            date_str="2026-01-01",
+            email_body="live body",
+        )
+
+    def test_auto_detects_imap_from_cached_account(self, monkeypatch):
+        db = MagicMock(spec=EmailDB)
+        db.get_cached_result.return_value = {"account": "imap@test.com"}
+        settings = MagicMock()
+        settings.imap_login = "imap@test.com"
+        monkeypatch.setattr(mcp_server, "get_resources", lambda profile: (db, MagicMock(), settings))
+        imap = MagicMock(spec=IMAPClient)
+        imap.fetch_full_email.return_value = {
+            "id": "42",
+            "message_id": "<rfc123@example.com>",
+            "sender": "s@x.com",
+            "subject": "Subj",
+            "date": "",
+            "body": "live body",
+            "account": "imap@test.com",
+        }
+        monkeypatch.setattr(mcp_server, "GmailClient", MagicMock(side_effect=AssertionError("should not be called")))
+        monkeypatch.setattr(mcp_server, "IMAPClient", lambda settings_instance: imap)
+
+        result = mcp_server.fetch_full_email("<rfc123@example.com>", profile="default")
+
+        imap.fetch_full_email.assert_called_once_with("<rfc123@example.com>")
+        assert result["body"] == "live body"
+
+
 class TestLoadTokenProfileMapReusesHelper:
     def test_delegates_to_list_profile_names(self, monkeypatch):
         fake_list = MagicMock(return_value=["default"])

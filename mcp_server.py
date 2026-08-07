@@ -1477,6 +1477,63 @@ def send_email_reply(message_id: str, body: str, account_type: Optional[str] = N
         return gmail.send_reply(message_id=message_id, body=body)
 
 @mcp.tool()
+def fetch_full_email(message_id: str, account_type: Optional[str] = None, profile: str = "default") -> Dict[str, Any]:
+    """
+    Fetches the full headers and body of a single email (by internal Gmail ID/IMAP UID or global
+    Message-ID). Serves the local cache at 0 token/network cost if the body was already downloaded;
+    otherwise fetches live from Gmail/IMAP and caches the result for next time.
+
+    :param message_id: The specific Message-ID (RFC 2822 header), Gmail internal ID, or IMAP UID of the email to fetch.
+    :param account_type: Optional override. Either "gmail" or "imap". If not provided, it will auto-detect from the local triage database cache.
+    :param profile: The dynamic profile environment to load (default: "default").
+    :return: A dictionary with sender, subject, date, body, account, and any cached triage metadata.
+    """
+    db, _, settings = get_resources(profile)
+
+    cached = db.get_cached_result(message_id)
+    if cached and cached.get("email_body"):
+        return {
+            "id": message_id,
+            "message_id": message_id,
+            "sender": cached.get("sender"),
+            "subject": cached.get("subject"),
+            "date": cached.get("date_str"),
+            "body": cached.get("email_body"),
+            "account": cached.get("account"),
+            "triage_level": cached.get("triage_level"),
+            "tag": cached.get("tag"),
+            "summary": cached.get("level_2_summary"),
+            "source": "cache",
+        }
+
+    # Auto-detect account type
+    detected_type = "gmail"
+    if account_type:
+        detected_type = account_type.lower()
+    elif cached:
+        account = cached.get("account", "")
+        if account == settings.imap_login:
+            detected_type = "imap"
+
+    if detected_type == "imap":
+        imap = IMAPClient(settings_instance=settings)
+        result = imap.fetch_full_email(message_id)
+    else:
+        gmail = GmailClient(settings_instance=settings)
+        result = gmail.fetch_full_email(message_id)
+
+    db.upsert_email_metadata(
+        message_id=result["message_id"],
+        account=result["account"],
+        sender=result.get("sender"),
+        subject=result.get("subject"),
+        date_str=result.get("date"),
+        email_body=result.get("body"),
+    )
+    result["source"] = "live"
+    return result
+
+@mcp.tool()
 def search_emails(query: str, profile: str = "default") -> List[Dict[str, Any]]:
     """
     Searches the live Gmail and IMAP mailboxes for emails matching the query.

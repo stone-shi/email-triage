@@ -269,6 +269,22 @@ class IMAPClient:
             logger.error("Failed to find message in IMAP: %s", e, exc_info=True)
             raise
 
+    def fetch_full_email(self, message_id_or_uid: str) -> Dict[str, Any]:
+        """
+        Fetches full headers + body for a single message, accepting either the IMAP UID or the
+        RFC 2822 Message-ID (resolved via _find_message).
+        """
+        parent_msg = self._find_message(message_id_or_uid)
+        return {
+            'id': parent_msg['uid'],
+            'message_id': parent_msg.get('message_id', ''),
+            'sender': parent_msg.get('from', ''),
+            'subject': parent_msg.get('subject', ''),
+            'date': '',
+            'body': self.fetch_full_body(parent_msg['uid']),
+            'account': self.login_user,
+        }
+
     def create_draft(
         self,
         to: str,

@@ -501,12 +501,29 @@ class GmailClient:
             
             if not messages:
                 raise ValueError(f"Message not found in Gmail with ID or Message-ID: {message_id_or_id}")
-            
+
             msg = self.service.users().messages().get(
                 userId='me', id=messages[0]['id'], format='metadata',
                 metadataHeaders=['Message-ID', 'From', 'Subject', 'Date', 'Reply-To']
             ).execute()
             return msg
+
+    def fetch_full_email(self, message_id_or_id: str) -> Dict[str, Any]:
+        """
+        Fetches full headers + body for a single message, accepting either Gmail's internal
+        ID or the RFC 2822 Message-ID (resolved via _find_message).
+        """
+        msg = self._find_message(message_id_or_id)
+        headers = {h['name'].lower(): h['value'] for h in msg.get('payload', {}).get('headers', [])}
+        return {
+            'id': msg['id'],
+            'message_id': headers.get('message-id', msg['id']),
+            'sender': headers.get('from', ''),
+            'subject': headers.get('subject', ''),
+            'date': headers.get('date', ''),
+            'body': self.fetch_full_body(msg['id']),
+            'account': self.settings.gmail_account,
+        }
 
     def create_draft(
         self,
